@@ -1,0 +1,51 @@
+dataset:
+  motif_dict_cfg:
+    4ffv_cdrh3:
+      contig_string: "A1-395/L1-108/H1-96/10-10/H107-119"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/4ffv.pdb"
+      atom_selection_mode: "all_atom"
+      
+    3nid_cdrh3:
+      contig_string: "A1-371/D1-373/L1-109/H1-96/12-12/H109-120"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3nid.pdb"
+      atom_selection_mode: "all_atom"
+      
+    5ggs_cdrh3:
+      contig_string: "Y1-114/D1-113/C1-96/13-13/C110-123"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5ggs.pdb"
+      atom_selection_mode: "all_atom"
+      
+    4cmh_cdrh3:
+      contig_string: "A1-160/C1-109/B1-96/13-13/B110-121"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/4cmh.pdb"
+      atom_selection_mode: "all_atom"
+      
+    3h3b_cdrh3:
+      contig_string: "B1-136/E1-113/D1-95/13-13/D109-118"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3h3b.pdb"
+      atom_selection_mode: "all_atom"
+      
+    5hi4_cdrh3:
+      contig_string: "B1-91/D1-112/C1-96/11-11/C108-119"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5hi4.pdb"
+      atom_selection_mode: "all_atom"
+      
+    3cx5_cdrh3:
+      contig_string: "P1-143/V1-107/U1-96/15-15/U112-123"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3cx5.pdb"
+      atom_selection_mode: "all_atom"
+      
+    5mes_cdrh3:
+      contig_string: "A1-149/L1-111/H1-96/12-12/H109-120"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5mes.pdb"
+      atom_selection_mode: "all_atom"
+      
+    1ic7_cdrh3:
+      contig_string: "Y1-129/L1-107/H1-95/7-7/H103-114"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/1ic7.pdb"
+      atom_selection_mode: "all_atom"
+      
+    1ncb_cdrh3:
+      contig_string: "N1-286/L1-109/H1-96/13-13/H110-121"
+      motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/1ncb.pdb"
+      atom_selection_mode: "all_atom"

@@ -1,0 +1,36 @@
+# @package _global_
+
+# 1. 继承基础配置并覆盖网络架构
+defaults:
+  - training_local_latents
+  - override nn: local_latents_score_nn_160M_motif_idx_aa  
+  - _self_
+
+# 2. 任务与路径
+run_name_: "antibody_inpainting_finetune"
+pretrain_ckpt_path: "./checkpoints_laproteina/LD4_motif_idx_aa.ckpt" 
+autoencoder_ckpt_path: "./checkpoints_laproteina/AE3_motif.ckpt"
+
+# 3. 数据集
+dataset:
+  datamodule:
+    _target_: proteinfoundation.datasets.antibody_simple_dataset.AntibodySimpleDataset
+    processed_dir: "./data/antibody_processed"
+    # [注意] 如果不改 train.py，这里的 batch_size 设置可能会在本地运行时被代码强制覆盖为 2
+    batch_size: 1  # 建议设为 1，多卡模式下总 Batch Size = 1 * 显卡数
+    num_workers: 8
+
+# 4. 训练参数
+opt:
+  lr: 1e-5
+  max_epochs: 100
+  # [新增] 明确指定分布式策略为 DDP (Distributed Data Parallel)
+  dist_strategy: "ddp" 
+
+hardware:
+  # [修改] 设置为您想要使用的显卡数量，例如 8
+  ngpus_per_node_: 4 
+
+log:
+  log_wandb: True
+  mode: "offline"

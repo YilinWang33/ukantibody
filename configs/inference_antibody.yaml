@@ -1,0 +1,129 @@
+defaults:
+  - inference_base
+  - generation: motif
+  - _self_
+
+ckpt_path: ./store/antibody_cdr_finetune_motif/checkpoints
+ckpt_name: last-EMA.ckpt
+autoencoder_ckpt_path: ./checkpoints_laproteina/AE3_motif.ckpt
+
+generation:
+  dataset:
+    motif_task_name: 4ffv_cdrh3  # 👈 想跑哪个抗体就在这里换名字
+    nsamples: 10
+
+    # ==========================================
+    # 完整的抗体约束配置（包含了总长度与多链顺序）
+    # ==========================================
+    motif_dict_cfg:
+      4ffv_cdrh3:
+        # 使用你刚刚脚本生成的精确 contig，完美避开所有缺失(gap)区域
+        contig_string: "A39-395/L1-29/L37-57/L65-72/L74-80/L83-108/H1-9/H11-30/H35-59/H62-72/H74-96/10-10/H107-109/H113-119"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/4ffv.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        # 使用你刚刚脚本算出的精确长度
+        motif_min_length: 556
+        motif_max_length: 556
+        segment_order: "A;L;H"
+
+      3nid_cdrh3:
+        contig_string: "A1-371/D1-373/L1-109/H1-96/12-12/H109-120"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3nid.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 973
+        motif_max_length: 973
+        segment_order: "A;D;L;H"
+
+      5ggs_cdrh3:
+        contig_string: "Y1-114/D1-113/C1-96/13-13/C110-123"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5ggs.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 350
+        motif_max_length: 350
+        segment_order: "Y;D;C"
+
+      4cmh_cdrh3:
+        contig_string: "A1-160/C1-109/B1-96/13-13/B110-121"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/4cmh.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 390
+        motif_max_length: 390
+        segment_order: "A;C;B"
+
+      3h3b_cdrh3:
+        contig_string: "B1-136/E1-113/D1-95/13-13/D109-118"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3h3b.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 367
+        motif_max_length: 367
+        segment_order: "B;E;D"
+
+      5hi4_cdrh3:
+        contig_string: "B1-91/D1-112/C1-96/11-11/C108-119"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5hi4.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 322
+        motif_max_length: 322
+        segment_order: "B;D;C"
+
+      3cx5_cdrh3:
+        contig_string: "P1-143/V1-107/U1-96/15-15/U112-123"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3cx5.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 373
+        motif_max_length: 373
+        segment_order: "P;V;U"
+
+      5mes_cdrh3:
+        contig_string: "A1-149/L1-111/H1-96/12-12/H109-120"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5mes.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 380
+        motif_max_length: 380
+        segment_order: "A;L;H"
+
+      1ic7_cdrh3:
+        contig_string: "Y1-129/L1-107/H1-95/7-7/H103-114"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/1ic7.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 350
+        motif_max_length: 350
+        segment_order: "Y;L;H"
+
+      1ncb_cdrh3:
+        contig_string: "N1-286/L1-109/H1-96/13-13/H110-121"
+        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/1ncb.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 516
+        motif_max_length: 516
+        segment_order: "N;L;H"
+
+  metric:
+    compute_designability: False
+    compute_novelty_pdb: False
+    compute_novelty_afdb: False
+    compute_fid: False
+
+  args:
+    nsteps: 50
+    self_cond: True
+
+  model:
+    bb_ca:
+      simulation_step_params:
+        sampling_mode: sc
+        sc_scale_noise: 0.1
+    local_latents:
+      simulation_step_params:
+        sampling_mode: sc
+        sc_scale_noise: 0.1

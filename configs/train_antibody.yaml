@@ -1,0 +1,62 @@
+# ============================================================
+# 1. 继承与覆盖配置
+# ============================================================
+defaults:
+  - training_local_latents
+  - override /dataset: antibody_custom 
+  - override /nn: local_latents_score_nn_160M_motif_idx_aa 
+  - _self_
+
+# ============================================================
+# 2. 实验设置
+# ============================================================
+run_name_: antibody_cdr_finetune_motif
+
+hardware:
+  accelerator: gpu
+  ngpus_per_node_: 1
+  nnodes_: 1
+
+# [关键修改 !!!] 这里必须添加 trainer 配置来解决 RuntimeError
+trainer:
+  # 告诉 DDP 忽略那些 LoRA 冻结的参数，不要报错
+  strategy: ddp_find_unused_parameters_true
+  # 或者，因为你是单卡调试，也可以强制设为 auto (有时候代码库会强制用 ddp，所以上面那个更保险)
+  # strategy: auto
+
+# ============================================================
+# 3. 预训练权重与策略
+# ============================================================
+pretrain_ckpt_path: "./checkpoints_laproteina/LD4_motif_idx_aa.ckpt"
+autoencoder_ckpt_path: "./checkpoints_laproteina/AE3_motif.ckpt"
+
+training:
+  motif_conditioning: True 
+  self_cond: True
+  p_folding_n_inv_folding_iters: 0.0
+  n_recycle: 0
+
+lora:
+  r: 16
+  lora_alpha: 32.0
+  lora_dropout: 0.1
+  train_bias: none
+
+opt:
+  lr: 1.0e-4
+  max_epochs: 100
+  check_val_every_n_epoch: 1
+  
+  # ⚠️ 把原本的 ddp 改为 auto
+  # auto 会自动识别你是单卡，从而关闭 DDP 检查，彻底解决那个 RuntimeError
+  dist_strategy: auto  
+
+  # 下面这两个参数保持默认即可
+  accumulate_grad_batches: 8
+  val_check_interval: 5000
+
+product_flowmatcher:
+  local_latents:
+    dim: null
+    
+force_precision_f32: False
