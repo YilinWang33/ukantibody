@@ -442,6 +442,17 @@ class GenDataset(Dataset):
             result["mask"] = self.masks[index].bool()  # [bs, num_res]
             result["residue_pdb_idx"] = self.res_indices[index]  
             result["chains"] = self.chain_indices[index]
+
+            # ================= [Debug 1: 数据源检查] =================
+            xm = result["x_motif"]
+            # 过滤出已知区域(掩码为True)的主链CA(索引为1，对应第3个维度)的坐标
+            known_ca = xm[:, :, 1, :][result["seq_motif_mask"]]
+            if known_ca.numel() > 0:
+                print(f"\n[DEBUG 1] Dataset输出 -> 已知片段CA平均坐标: {known_ca.mean().item():.4f}, 最大绝对值: {known_ca.abs().max().item():.4f}")
+            else:
+                print(f"\n[DEBUG 1 警告] Dataset输出 -> !!! motif_mask 为空，完全没有已知片段 !!!")
+            # ========================================================
+
             return result
 
         # Fallback: unconditional

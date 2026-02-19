@@ -544,6 +544,53 @@ class Proteina(L.LightningModule):
         fn_predict_for_sampling = partial(
             self.predict_for_sampling, n_recycle=self.inf_cfg.get("n_recycle", 0)
         )
+
+        # ===================== [终极修复：同时编码位置与旋转，并修复字典结构] =====================
+        fixed_context = None
+        fixed_mask = None
+        if "x_motif" in batch and "seq_motif_mask" in batch:
+            fixed_context = {}
+            
+            # 1. 构造一个去除了 DataLoader Dummy 维度的临时字典给 AutoEncoder 用
+            motif_batch = {}
+            for k, v in batch.items():
+                if isinstance(v, torch.Tensor) and v.dim() > 0 and v.size(0) == 1:
+                    motif_batch[k] = v.squeeze(0)
+                else:
+                    motif_batch[k] = v
+
+            # 固定 CA 坐标 (bb_ca)
+            fixed_context["bb_ca"] = motif_batch["x_motif"][:, :, 1, :]
+            
+            # 2. 调用 AutoEncoder 固定局部旋转方向 (local_latents)
+            if self.autoencoder is not None and "local_latents" in self.fm.data_modes:
+                # 补齐 AutoEncoder 需要的字段
+                motif_batch["coords_nm"] = motif_batch["x_motif"]
+                motif_batch["coords"] = motif_batch["x_motif"]
+                
+                # =================== 【终极安全锁：修复 CUDA 越界】 ===================
+                # CDR 的未知序列常被标记为 20/21，F.one_hot(..., 20) 遇到 >=20 的值会直接导致 CUDA 崩溃！
+                # 强行把它们压制在 0~19 之间，即可完美绕过这个坑。
+                motif_batch["residue_type"] = torch.clamp(motif_batch["seq_motif"], min=0, max=19)
+                # =======================================================================
+                
+                if "motif_mask" in motif_batch:
+                    motif_batch["coord_mask"] = motif_batch["motif_mask"]
+                
+                # [关键补丁]：伪造 mask_dict 避免 AutoEncoder 报 KeyError
+                if "mask_dict" not in motif_batch and "mask" in motif_batch:
+                    motif_batch["mask_dict"] = {
+                        "coords": motif_batch["mask"].unsqueeze(-1).unsqueeze(-1),
+                        "residue_type": motif_batch["mask"]
+                    }
+                
+                with torch.no_grad():
+                    encoded_motif = self.autoencoder.encode(motif_batch)
+                fixed_context["local_latents"] = encoded_motif["z_latent"]
+            
+            fixed_mask = motif_batch["seq_motif_mask"]
+        # ======================================================================================
+
         # [新增] 确保 batch 包含 x_1 (Clean Samples)，用于 Inpainting
         # 调用之前定义的辅助函数
         #batch = self.add_clean_samples(batch)
@@ -574,6 +621,21 @@ class Proteina(L.LightningModule):
         )
         # Dict with keys `coors` (a37), `residue_type`, and `mask`,
         # shapes [b, n, 37, 3], [b, n], [b, n]
+
+        # ================== 【最后一步：打补丁，完美物理缝合】 ==================
+        if "x_motif" in batch and "seq_motif_mask" in batch:
+            # 拿到真实的 37 原子坐标 (转回埃 Å)
+            true_coords = motif_batch["x_motif"] * 10.0
+            true_seq = motif_batch["seq_motif"]
+            mask = motif_batch["seq_motif_mask"]  # [B, N]
+            
+            b_size = mask.shape[0]
+            for i in range(b_size):
+                # 强行用真实的原子覆盖掉 Decoder 还原出来的带误差原子
+                sample_prots["coors"][i][mask[i]] = true_coords[i][mask[i]].to(sample_prots["coors"].device)
+                sample_prots["residue_type"][i][mask[i]] = true_seq[i][mask[i]].to(sample_prots["residue_type"].device)
+        # ========================================================================
+        
 
         generation_list = []
         for i in range(sample_prots["coors"].shape[0]):

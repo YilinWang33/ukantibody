@@ -320,6 +320,17 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                 and value.size(0) == 1
             ):
                 batch[key] = value.squeeze(0)
+                # ================= [新增：强制注入已知结构用于 Repainting] =================
+        #if "x_motif" in batch and "seq_motif_mask" in batch:
+            #if fixed_context is None:
+                #fixed_context = {}
+            # 提取主链 CA 原子的已知坐标，x_motif 形状是 [B, N, 37, 3]，CA是 index 1
+            #fixed_context["bb_ca"] = batch["x_motif"][:, :, 1, :]
+            
+            #if fixed_mask is None:
+                # seq_motif_mask 形状是 [B, N]，代表哪些残基是已知的
+                #fixed_mask = batch["seq_motif_mask"]
+        # =========================================================================       
 
         if "mask" in batch and batch["mask"] is not None:
             mask = batch["mask"]
@@ -392,7 +403,29 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                 batch["mask"] = mask
                 
                 if step > 0 and self_cond:
-                    batch["x_sc"] = x_1_pred
+                    # 1. 深度拷贝一份，避免修改污染原来的引用
+                    batch["x_sc"] = {k: v.clone() for k, v in x_1_pred.items()}
+                    
+                    # ================== 【新增：强行修复自条件 x_sc】 ==================
+                    if fixed_context is not None and fixed_mask is not None:
+                        for dm in self.data_modes:
+                            if dm in fixed_context and dm in batch["x_sc"]:
+                                x_1_fixed = fixed_context[dm].to(device)
+                                
+                                # 维度对齐安全锁 (针对 bb_ca 可能的 4 维变 3 维问题)
+                                if dm == "bb_ca" and x_1_fixed.ndim == 4 and x_1_fixed.shape[-2] == 37:
+                                    x_1_fixed = x_1_fixed[:, :, 1, :]
+                                
+                                m = fixed_mask.to(device)
+                                # 动态对齐掩码维度
+                                if batch["x_sc"][dm].ndim == 3:
+                                    m = m.unsqueeze(-1)
+                                elif batch["x_sc"][dm].ndim == 4:
+                                    m = m.unsqueeze(-1).unsqueeze(-1)
+                                
+                                # 强行用真实的已知结构，替换掉网络自己瞎猜的虚假上下文
+                                batch["x_sc"][dm] = m * x_1_fixed + (~m) * batch["x_sc"][dm]
+                    # ===================================================================
 
                 nn_out = self.get_clean_pred_n_guided_vector(
                     batch=batch,
@@ -431,6 +464,12 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                             x_1_fixed = fixed_context[dm].to(device)
                             # Initial noise (x_0) for fixed regions
                             x_0_fixed = x_0_noise[dm].to(device)
+
+                            # ================== 【关键修复：对齐维度】 ==================
+                            # 如果网络当前处理的是 bb_ca (单原子)，而 fixed_context 里传入的是全原子 (37原子)
+                            if dm == "bb_ca" and x_1_fixed.ndim == 4 and x_1_fixed.shape[-2] == 37:
+                                x_1_fixed = x_1_fixed[:, :, 1, :]  # 只提取 CA 坐标
+                            # ============================================================
                             
                             # Get the time scalar for the *next* step (where we just arrived)
                             # t_next is shape [B], we need broadcasting
@@ -453,6 +492,39 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                             
                             # Overwrite
                             x[dm] = m * x_fixed_noisy + (~m) * x[dm]
+
+                    # ==============================================================================
+                # ========================= [DEBUG 3 插入位置 开始] =========================
+                # ==============================================================================
+                # 只在 bb_ca 这个模态上打印，并且为了避免刷屏，每 10 步打印一次，以及最后一步打印
+                if "bb_ca" in x and (step % 10 == 0 or step == nsteps - 1):
+                    x_bb = x["bb_ca"] # 通常形状为 [B, N, 3]
+                    v_pred_bb = nn_out["bb_ca"]["v"] # 从前面步骤预测出来的速度
+                    
+                    print(f"\n[DEBUG 3 Flow Matching] Step {step}/{nsteps} (t={ts['bb_ca'][step].item():.3f} -> t_next={ts['bb_ca'][step+1].item():.3f})")
+                    print(f"  --> 当前生成部分 (x_t) bb_ca 的 abs().max(): {x_bb.abs().max().item():.4f}")
+                    print(f"  --> 当前网络预测速度 (v_pred) bb_ca 的 abs().max(): {v_pred_bb.abs().max().item():.4f}")
+                    
+                    # 如果有 repainting，检查刚被强制覆盖进去的 x_fixed_noisy 的尺度
+                    if fixed_context is not None and fixed_mask is not None and "bb_ca" in fixed_context:
+                        # 计算当前用于覆盖的理论噪声坐标的极值
+                        xf_n = x_fixed_noisy
+                        print(f"  --> [Repainting] 理论轨迹 x_fixed_noisy (bb_ca) 的 abs().max(): {xf_n.abs().max().item():.4f}")
+                        
+                        # 计算真实结构 x_1 的极值，用于对比
+                        print(f"  --> [Repainting] 真实结构 x_1_fixed (bb_ca) 的 abs().max(): {x_1_fixed.abs().max().item():.4f}")
+                        
+                        # 重点检查：被替换的区域，它相邻的氨基酸是不是扯断了？
+                        # 我们简单计算一下全长 CA 的相邻距离
+                        ca_dist = torch.norm(x_bb[:, 1:, :] - x_bb[:, :-1, :], dim=-1)
+                        print(f"  --> [几何检查] 当前所有相邻 CA 键长的最大值: {ca_dist.max().item():.4f} nm")
+                        
+                        # 检查网络是否直接预测出了 NaN
+                        if torch.isnan(v_pred_bb).any():
+                            print(f"  --> [致命错误] v_pred 出现 NaN !!!")
+                # ==============================================================================
+                # ========================= [DEBUG 3 插入位置 结束] =========================
+                # ==============================================================================
 
             additional_info = {
                 "mask": mask,

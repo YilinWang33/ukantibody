@@ -90,6 +90,13 @@ def generate_combinations(min_cost, max_cost, ranges):
     return result
 
 
+import random
+from typing import Tuple, List
+
+# 如果你的文件里没有这个函数，保留原来的即可，这里默认它存在
+# def generate_combinations(...): 
+#     ...
+
 def generate_motif_indices(
     contig: str,
     min_length: int,
@@ -100,6 +107,8 @@ def generate_motif_indices(
     components = contig.split("/")
     ranges = []
     motif_length = 0
+    
+    # 1. 计算总长度和生成组合（保留原始逻辑）
     for part in components:
         if part[0] in ALPHABET:
             if "-" in part:
@@ -121,15 +130,19 @@ def generate_motif_indices(
     )
 
     overall_lengths, motif_indices, out_strs = [], [], []
-    all_res_indices, all_chain_indices = [], [] # NEW
+    all_res_indices, all_chain_indices = [], [] 
     
     combos = random.choices(combinations, k=nsamples)
-    for combo in combos:
+    
+    for combo_idx_outer, combo in enumerate(combos):
         combo_idx = 0
         current_dense_idx = 0
-        current_res_idx = 1
         current_chain_idx = 0
         last_chain_letter = None
+        
+        # 🌟 核心修复：引入严格连续的物理序列计数器
+        # 我们用它来无视 IMGT 的跳跃，保证模型认为肽链是连着的
+        continuous_res_idx = 1
         
         motif_index, res_idx_list, chain_idx_list = [], [], []
         output_string = ""
@@ -137,12 +150,19 @@ def generate_motif_indices(
         for part in components:
             if part[0] in ALPHABET:
                 chain_letter = part[0]
-                # If chain changes, add a big gap (e.g. 200) so the model knows they are disconnected
+                
+                # 检测是否切换到了新的一条链 (例如从 A 链换到 L 链)
                 if last_chain_letter is not None and chain_letter != last_chain_letter:
-                    current_res_idx += 200
                     current_chain_idx += 1
+                    # ✅ 正确修复：基于上一条链结束时的序号，直接加上 50 作为跨链断点！
+                    continuous_res_idx += 50
+                elif last_chain_letter is None:
+                    # 确保第一条链从 1 开始
+                    continuous_res_idx = 1
+                    
                 last_chain_letter = chain_letter
 
+                # 解析 IMGT 编号，但这里仅仅是为了获取这段序列的“物理长度”
                 if "-" in part:
                     start, end = map(int, part[1:].split("-"))
                 else:
@@ -150,26 +170,46 @@ def generate_motif_indices(
                 length = end - start + 1
                 
                 motif_index.extend(range(current_dense_idx + 1, current_dense_idx + 1 + length))
-                res_idx_list.extend(range(current_res_idx, current_res_idx + length))
+                
+                # 🌟 分配连续的物理序号，无视 IMGT 的 start 和 end
+                assigned_indices = [continuous_res_idx + i for i in range(length)]
+                res_idx_list.extend(assigned_indices)
                 chain_idx_list.extend([current_chain_idx] * length)
+                
+                # ====== 🐞 自动 DEBUG 输出 (只打印第一条采样，防止刷屏) ======
+                if combo_idx_outer == 0:
+                    print(f"[Debug-连续编号] 已知片段: {part:8s} | 真实长度: {length:3d} | "
+                          f"分配的物理ResIdx: {assigned_indices[0]:4d} 到 {assigned_indices[-1]:4d} | "
+                          f"ChainIdx: {current_chain_idx}")
+
+                #  物理序号顺延，为下一个片段（不管它是已知还是生成的 CDR）准备
+                continuous_res_idx += length 
                 
                 new_part = part[0] + str(current_dense_idx + 1)
                 if length > 1:
                     new_part += "-" + str(current_dense_idx + length)
                 output_string += new_part + "/"
-                
                 current_dense_idx += length
-                current_res_idx += length
+                
             else:
                 length = int(combo[combo_idx])
                 combo_idx += 1
                 output_string += str(length) + "/"
                 
-                res_idx_list.extend(range(current_res_idx, current_res_idx + length))
+                # 🌟 生成区域直接顺接上文的物理编号
+                assigned_indices = [continuous_res_idx + i for i in range(length)]
+                res_idx_list.extend(assigned_indices)
                 chain_idx_list.extend([current_chain_idx] * length)
                 
+                # ====== 🐞 自动 DEBUG 输出 ======
+                if combo_idx_outer == 0:
+                    print(f"[Debug-连续编号] 生成片段: {'CDR(缺失)':8s} | 真实长度: {length:3d} | "
+                          f"分配的物理ResIdx: {assigned_indices[0]:4d} 到 {assigned_indices[-1]:4d} | "
+                          f"ChainIdx: {current_chain_idx}")
+
+                # 🌟 物理序号顺延
+                continuous_res_idx += length 
                 current_dense_idx += length
-                current_res_idx += length
                 
         overall_lengths.append(current_dense_idx)
         motif_indices.append(motif_index)
@@ -178,7 +218,6 @@ def generate_motif_indices(
         all_chain_indices.append(chain_idx_list)
         
     return overall_lengths, motif_indices, out_strs, all_res_indices, all_chain_indices
-
 
 def parse_motif_atom_spec(spec: str):
     """Parse a motif atom specification string into a list of (chain, res_id, [atom_names])"""

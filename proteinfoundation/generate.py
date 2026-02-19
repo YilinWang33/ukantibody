@@ -321,6 +321,24 @@ def save_motif_predictions(
     for j, pred in enumerate(predictions):
         # 这里的解包依然保持我们之前修改过的 4 个变量
         coors_atom37, residue_type, res_idx, chain_idx = pred  
+
+        # ====== 🐞 插入 PRINT 2：检查生成的坐标是否崩溃 ======
+        print(f"\n[Debug] Sample {j} 解析完成！")
+        print(f"        生成的坐标形状: {coors_atom37.shape}")
+        
+        # 检查有没有出现 NaN 或极大的坐标值（爆炸特征）
+        is_nan = torch.isnan(coors_atom37).any().item()
+        max_coord = torch.max(torch.abs(coors_atom37)).item()
+        print(f"        坐标是否有 NaN: {is_nan}")
+        print(f"        坐标的绝对值最大值: {max_coord:.4f} (如果 > 100 通常意味着崩了)")
+        
+        # 计算相邻 CA 原子之间的距离（看看有没有肽键断裂）
+        ca_coords = coors_atom37[:, 1, :] # 1是CA原子的索引
+        ca_distances = torch.norm(ca_coords[1:] - ca_coords[:-1], dim=-1)
+        max_dist = torch.max(ca_distances).item()
+        print(f"        相邻CA原子的最大距离: {max_dist:.4f} 埃 (如果大于 5 埃说明链断了)")
+        # ===================================================
+        
         n = coors_atom37.shape[-3]
         
         # 初始文件夹名称

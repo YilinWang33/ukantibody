@@ -1932,6 +1932,21 @@ class FeatureFactory(torch.nn.Module):
 
     def forward(self, batch):
         """Returns masked features, shape depends on mode, either 'seq' or 'pair'."""
+
+        # ================= [Debug 2: 检查送入网络的特征] =================
+        if not getattr(self, '_debug_logged', False):
+            print(f"\n[DEBUG 2] FeatureFactory 接收到的 Batch keys: {list(batch.keys())}")
+            if "x_motif" in batch:
+                xm_batch = batch["x_motif"]
+                print(f"[DEBUG 2] x_motif 形状: {xm_batch.shape}, 零元素占比: {(xm_batch == 0).float().mean().item():.4f}")
+            if "residue_pdb_idx" in batch:
+                res_idx = batch["residue_pdb_idx"]
+                print(f"[DEBUG 2] res_idx min: {res_idx.min().item()}, max: {res_idx.max().item()}")
+                if res_idx.max().item() > 2056:
+                    print(f"[DEBUG 2 警告] res_idx 超过了 get_index_embedding 的默认 max_len (2056)！这会导致位置编码异常！")
+            self._debug_logged = True
+        # ===============================================================
+        
         # If no features requested just return the zero tensor of appropriate dimensions
         if self.ret_zero:
             return self.zero_creator(batch)
