@@ -9,7 +9,7 @@ autoencoder_ckpt_path: ./checkpoints_laproteina/AE3_motif.ckpt
 
 generation:
   dataset:
-    motif_task_name: 4ffv_cdrh3  # 👈 想跑哪个抗体就在这里换名字
+    motif_task_name: 5mes_cdrh3  # 👈 想跑哪个抗体就在这里换名字
     nsamples: 10
 
     # ==========================================
@@ -17,14 +17,17 @@ generation:
     # ==========================================
     motif_dict_cfg:
       4ffv_cdrh3:
-        # 使用你刚刚脚本生成的精确 contig，完美避开所有缺失(gap)区域
-        contig_string: "A39-395/L1-29/L37-57/L65-72/L74-80/L83-108/H1-9/H11-30/H35-59/H62-72/H74-96/10-10/H107-109/H113-119"
+        # 严格对应存在的片段，并在缺失的缝隙处填入准确的需要生成的长度！
+        # L链缺失补齐: (30-36:7), (58-64:7), (73:1), (81-82:2)
+        # H链缺失补齐: (10:1), (31-34:4), (60-61:2), (73:1), (110-112:3)
+        # 以及你要设计的 H3: (97-106:10)
+        contig_string: "A39-395/L1-29/7-7/L37-57/7-7/L65-72/1-1/L74-80/2-2/L83-108/H1-9/1-1/H11-30/4-4/H35-59/2-2/H62-72/1-1/H74-96/10-10/H107-109/3-3/H113-119"
         motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/4ffv.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
-        # 使用你刚刚脚本算出的精确长度
-        motif_min_length: 556
-        motif_max_length: 556
+        # 重新计算总长度：提取到的骨架 546 + 补齐骨架的28 + CDRH3的10 = 584
+        motif_min_length: 584
+        motif_max_length: 584
         segment_order: "A;L;H"
 
       3nid_cdrh3:
@@ -82,12 +85,12 @@ generation:
         segment_order: "P;V;U"
 
       5mes_cdrh3:
-        contig_string: "A1-149/L1-111/H1-96/12-12/H109-120"
+        contig_string: "A172-322/L2-9/L11-30/L35-57/L65-72/L74-80/L83-110/L113-129/H1-9/H11-30/H35-59/H62-72/H74-104/12-12/H118-129"
         motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5mes.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
-        motif_min_length: 380
-        motif_max_length: 380
+        motif_min_length: 382
+        motif_max_length: 382
         segment_order: "A;L;H"
 
       1ic7_cdrh3:

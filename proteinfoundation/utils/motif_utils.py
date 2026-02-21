@@ -97,18 +97,21 @@ from typing import Tuple, List
 # def generate_combinations(...): 
 #     ...
 
+# 在文件上方添加全局变量，用于链字符和索引的相互转换
+PDB_CHAIN_IDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+
 def generate_motif_indices(
     contig: str,
     min_length: int,
     max_length: int,
     nsamples: int = 1,
 ) -> Tuple[List[int], List[List[int]], List[str], List[List[int]], List[List[int]]]:
-    ALPHABET = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
+    ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     components = contig.split("/")
     ranges = []
     motif_length = 0
     
-    # 1. 计算总长度和生成组合（保留原始逻辑）
+    # 1. 计算总长度
     for part in components:
         if part[0] in ALPHABET:
             if "-" in part:
@@ -137,32 +140,21 @@ def generate_motif_indices(
     for combo_idx_outer, combo in enumerate(combos):
         combo_idx = 0
         current_dense_idx = 0
-        current_chain_idx = 0
-        last_chain_letter = None
-        
-        # 🌟 核心修复：引入严格连续的物理序列计数器
-        # 我们用它来无视 IMGT 的跳跃，保证模型认为肽链是连着的
-        continuous_res_idx = 1
         
         motif_index, res_idx_list, chain_idx_list = [], [], []
         output_string = ""
         
+        # 记录上一段的链名和编号，用于 CDR 生成区的顺接
+        last_chain_letter = None
+        last_res_num = 0
+        
         for part in components:
             if part[0] in ALPHABET:
+                # ====== 处理已知 Framework 和 抗原 ======
                 chain_letter = part[0]
-                
-                # 检测是否切换到了新的一条链 (例如从 A 链换到 L 链)
-                if last_chain_letter is not None and chain_letter != last_chain_letter:
-                    current_chain_idx += 1
-                    # ✅ 正确修复：基于上一条链结束时的序号，直接加上 50 作为跨链断点！
-                    continuous_res_idx += 50
-                elif last_chain_letter is None:
-                    # 确保第一条链从 1 开始
-                    continuous_res_idx = 1
-                    
                 last_chain_letter = chain_letter
-
-                # 解析 IMGT 编号，但这里仅仅是为了获取这段序列的“物理长度”
+                current_chain_idx = PDB_CHAIN_IDS.index(chain_letter) # 映射为正确的模型 Chain index
+                
                 if "-" in part:
                     start, end = map(int, part[1:].split("-"))
                 else:
@@ -171,20 +163,16 @@ def generate_motif_indices(
                 
                 motif_index.extend(range(current_dense_idx + 1, current_dense_idx + 1 + length))
                 
-                # 🌟 分配连续的物理序号，无视 IMGT 的 start 和 end
-                assigned_indices = [continuous_res_idx + i for i in range(length)]
+                # 🌟 直接使用 contig 字符串里给定的真实编号！
+                assigned_indices = list(range(start, end + 1))
                 res_idx_list.extend(assigned_indices)
                 chain_idx_list.extend([current_chain_idx] * length)
                 
-                # ====== 🐞 自动 DEBUG 输出 (只打印第一条采样，防止刷屏) ======
-                if combo_idx_outer == 0:
-                    print(f"[Debug-连续编号] 已知片段: {part:8s} | 真实长度: {length:3d} | "
-                          f"分配的物理ResIdx: {assigned_indices[0]:4d} 到 {assigned_indices[-1]:4d} | "
-                          f"ChainIdx: {current_chain_idx}")
-
-                #  物理序号顺延，为下一个片段（不管它是已知还是生成的 CDR）准备
-                continuous_res_idx += length 
+                last_res_num = end # 更新为这段框架的末尾编号
                 
+                if combo_idx_outer == 0:
+                    print(f"[数据流 Debug] 解析已知片段: {part:8s} | 映射至链: {chain_letter} | 写入PDB编号: {assigned_indices[0]} -> {assigned_indices[-1]}")
+
                 new_part = part[0] + str(current_dense_idx + 1)
                 if length > 1:
                     new_part += "-" + str(current_dense_idx + length)
@@ -192,23 +180,24 @@ def generate_motif_indices(
                 current_dense_idx += length
                 
             else:
+                # ====== 处理待生成的 CDR 区域 ======
                 length = int(combo[combo_idx])
                 combo_idx += 1
                 output_string += str(length) + "/"
                 
-                # 🌟 生成区域直接顺接上文的物理编号
-                assigned_indices = [continuous_res_idx + i for i in range(length)]
+                # 🌟 继承上文紧挨着的那条链，并顺接它的编号
+                chain_letter = last_chain_letter if last_chain_letter else 'A'
+                current_chain_idx = PDB_CHAIN_IDS.index(chain_letter)
+                
+                # 接在 framework 尾部数字之后 (例如前一个是 H96，那 CDR 就从 97 开始)
+                assigned_indices = list(range(last_res_num + 1, last_res_num + 1 + length))
                 res_idx_list.extend(assigned_indices)
                 chain_idx_list.extend([current_chain_idx] * length)
                 
-                # ====== 🐞 自动 DEBUG 输出 ======
                 if combo_idx_outer == 0:
-                    print(f"[Debug-连续编号] 生成片段: {'CDR(缺失)':8s} | 真实长度: {length:3d} | "
-                          f"分配的物理ResIdx: {assigned_indices[0]:4d} 到 {assigned_indices[-1]:4d} | "
-                          f"ChainIdx: {current_chain_idx}")
+                    print(f"[数据流 Debug] 解析生成CDR:  长度{length:2d} | 映射至链: {chain_letter} | 写入PDB编号: {assigned_indices[0]} -> {assigned_indices[-1]}")
 
-                # 🌟 物理序号顺延
-                continuous_res_idx += length 
+                last_res_num += length
                 current_dense_idx += length
                 
         overall_lengths.append(current_dense_idx)

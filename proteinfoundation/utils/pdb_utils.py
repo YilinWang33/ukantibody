@@ -151,14 +151,7 @@ def write_prot_to_pdb(
 
 
 def to_pdb(prot: Protein, model=1, add_end=True) -> str:
-    """Converts a `Protein` instance to a PDB string.
-
-    Args:
-      prot: The protein to convert to PDB.
-
-    Returns:
-      PDB string.
-    """
+    """Converts a `Protein` instance to a PDB string."""
     restypes = residue_constants.restypes + ["X"]
     res_1to3 = lambda r: residue_constants.restype_1to3.get(restypes[r], "UNK")
     atom_types = residue_constants.atom_types
@@ -168,7 +161,6 @@ def to_pdb(prot: Protein, model=1, add_end=True) -> str:
     atom_mask = prot.atom_mask
     aatype = prot.aatype
     atom_positions = prot.atom_positions
-    #residue_index = prot.residue_index.astype(int) + 1  # to start from 1
     residue_index = prot.residue_index.astype(int)
     chain_index = prot.chain_index.astype(int)
     b_factors = prot.b_factors
@@ -176,39 +168,43 @@ def to_pdb(prot: Protein, model=1, add_end=True) -> str:
     if np.any(aatype > residue_constants.restype_num):
         raise ValueError("Invalid aatypes.")
 
-    # Construct a mapping from chain integer indices to chain ID strings.
+    # 还原真实链字符映射
     chain_ids = {}
-    for i in np.unique(chain_index):  # np.unique gives sorted output.
+    for i in np.unique(chain_index):  
         if i >= PDB_MAX_CHAINS:
-            raise ValueError(
-                f"The PDB format supports at most {PDB_MAX_CHAINS} chains."
-            )
+            raise ValueError(f"The PDB format supports at most {PDB_MAX_CHAINS} chains.")
         chain_ids[i] = PDB_CHAIN_IDS[i]
 
     pdb_lines.append(f"MODEL     {model}")
     atom_index = 1
     last_chain_index = chain_index[0]
-    chain_residue_index_offset = 0
-    # Add all atom sites.
+    
+    # 【修复】：按国际通用PDB标准强制排序原子: N, CA, C, O, CB ...
+    ordered_atom_indices = [0, 1, 2, 4, 3] + list(range(5, 37))
+
     for i in range(aatype.shape[0]):
-        # Close the previous chain if in a multichain PDB.
+        # 处理断链 (遇到不同的链索引时，插入 TER)
         if last_chain_index != chain_index[i]:
             pdb_lines.append(
                 _chain_end(
                     atom_index,
                     res_1to3(aatype[i - 1]),
                     chain_ids[chain_index[i - 1]],
-                    residue_index[i - 1],
+                    residue_index[i - 1], # 👈 不做任何加减法，直接用原编号
                 )
             )
             last_chain_index = chain_index[i]
-            #chain_residue_index_offset = residue_index[i]
-            atom_index += 1  # Atom index increases at the TER symbol.
+            atom_index += 1 
 
         res_name_3 = res_1to3(aatype[i])
-        for atom_name, pos, mask, b_factor in zip(
-            atom_types, atom_positions[i], atom_mask[i], b_factors[i]
-        ):
+        is_chain_end = (i == aatype.shape[0] - 1) or (chain_index[i] != chain_index[i + 1])
+
+        for j in ordered_atom_indices:
+            atom_name = atom_types[j]
+            pos = atom_positions[i][j]
+            mask = atom_mask[i][j]
+            b_factor = b_factors[i][j]
+            
             if mask < 0.5:
                 continue
 
@@ -217,19 +213,26 @@ def to_pdb(prot: Protein, model=1, add_end=True) -> str:
             alt_loc = ""
             insertion_code = ""
             occupancy = 1.00
-            element = atom_name[0]  # Protein supports only C, N, O, S, this works.
+            element = atom_name[0]
             charge = ""
-            # PDB is a columnar format, every space matters here!
+            
+            # 【修复】：直接写入真实的 residue_index[i]，去除原有错误偏移
             atom_line = (
                 f"{record_type:<6}{atom_index:>5} {name:<4}{alt_loc:>1}"
                 f"{res_name_3:>3} {chain_ids[chain_index[i]]:>1}"
-                f"{residue_index[i] - chain_residue_index_offset:>4}{insertion_code:>1}   "
+                f"{residue_index[i]:>4}{insertion_code:>1}   "
                 f"{pos[0]:>8.3f}{pos[1]:>8.3f}{pos[2]:>8.3f}"
                 f"{occupancy:>6.2f}{b_factor:>6.2f}          "
                 f"{element:>2}{charge:>2}"
             )
             pdb_lines.append(atom_line)
             atom_index += 1
+            
+            # 【修复】：补充多肽链末端必须有的 OXT 原子
+            if is_chain_end and atom_name == "O":
+                oxt_line = atom_line.replace(" O  ", " OXT")
+                pdb_lines.append(oxt_line)
+                atom_index += 1
 
     # Close the final chain.
     pdb_lines.append(
@@ -244,9 +247,8 @@ def to_pdb(prot: Protein, model=1, add_end=True) -> str:
     if add_end:
         pdb_lines.append("END")
 
-    # Pad all lines to 80 characters.
     pdb_lines = [line.ljust(80) for line in pdb_lines]
-    return "\n".join(pdb_lines) + "\n"  # Add terminating newline.
+    return "\n".join(pdb_lines) + "\n"
 
 
 def _chain_end(atom_index, end_resname, chain_name, residue_index) -> str:
