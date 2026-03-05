@@ -120,7 +120,7 @@ class AntibodyDataset(Dataset):
         # 或者抛出异常
         print(f"[Error] Failed to load valid data after {max_retries} attempts starting from idx {idx}")
         return None
-
+    '''
     def _inject_cdr_mask(self, graph, entry):
         """
         根据 JSON 中的 CDR pos (IMGT编号) 生成 is_cdr 掩码。
@@ -179,7 +179,57 @@ class AntibodyDataset(Dataset):
                             break
         
         graph.is_cdr = is_cdr
+    '''
+    def _inject_cdr_mask(self, graph, entry):
+        """
+        根据 JSON 中的 CDR pos (IMGT编号) 生成 is_cdr 掩码。
+        修改版：仅仅 Mask CDR-H3 区域，固定其余所有上下文！
+        """
+        if graph.num_nodes is None:
+            num_residues = graph.residue_type.shape[0]
+            graph.num_nodes = num_residues
+        else:
+            num_residues = graph.num_nodes
+            
+        is_cdr = torch.zeros(num_residues, dtype=torch.bool)
+        
+        # 解析链 ID 和残基编号
+        chain_ids = []
+        res_nums = []
+        
+        if hasattr(graph, 'chain_id') and hasattr(graph, 'residue_number'):
+            chain_ids = graph.chain_id
+            res_nums = graph.residue_number
+        else:
+            for res_str in graph.residue_id:
+                parts = res_str.split(':')
+                chain_ids.append(parts[0])
+                try:
+                    res_nums.append(int(parts[2]))
+                except ValueError:
+                    res_nums.append(-999) 
 
+        # [关键修改] 仅保留 heavy_chain 的 cdrh3_pos
+        cdr_ranges = {
+            entry['heavy_chain']: [
+                entry.get('cdrh3_pos')
+            ]
+        }
+
+        # 遍历所有残基，标记 CDR-H3
+        for i in range(num_residues):
+            c_id = chain_ids[i]
+            r_num = int(res_nums[i])
+            
+            if c_id in cdr_ranges:
+                for rng in cdr_ranges[c_id]:
+                    # rng 格式通常是 [start, end]
+                    if rng is not None and len(rng) >= 2:
+                        if rng[0] <= r_num <= rng[1]:
+                            is_cdr[i] = True
+                            break
+        
+        graph.is_cdr = is_cdr
 # 这是一个 LightningDataModule，用于连接 Trainer
 class AntibodyLightningDataModule(BaseLightningDataModule):
     def __init__(self, json_path, pdb_dir, max_length=None, **kwargs):

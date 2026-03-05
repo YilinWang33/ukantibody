@@ -37,13 +37,13 @@ training:
   n_recycle: 0
 
 lora:
-  r: 16
+  r: null
   lora_alpha: 32.0
   lora_dropout: 0.1
   train_bias: none
 
 opt:
-  lr: 1.0e-4
+  lr: 1.0e-5
   max_epochs: 100
   check_val_every_n_epoch: 1
   

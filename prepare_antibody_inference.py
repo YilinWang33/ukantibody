@@ -1,129 +1,204 @@
 import json
-import pandas as pd
 import os
 import argparse
+import pandas as pd
+from Bio.PDB import PDBParser
+import warnings
+from Bio import BiopythonWarning
 
-def generate_motif_csv(json_path, output_csv_path, target_cdr="cdrh3"):
+# 忽略 PDB 解析时常见的一些小警告
+warnings.simplefilter('ignore', BiopythonWarning)
+
+# 3字母到单字母氨基酸的映射表
+THREE_TO_ONE = {
+    'ALA': 'A', 'ARG': 'R', 'ASN': 'N', 'ASP': 'D', 'CYS': 'C',
+    'GLN': 'Q', 'GLU': 'E', 'GLY': 'G', 'HIS': 'H', 'ILE': 'I',
+    'LEU': 'L', 'LYS': 'K', 'MET': 'M', 'PHE': 'F', 'PRO': 'P',
+    'SER': 'S', 'THR': 'T', 'TRP': 'W', 'TYR': 'Y', 'VAL': 'V',
+    'MSE': 'M' # 常见修饰
+}
+
+def get_chain_residues(chain):
     """
-    根据 SabDab JSON 生成 La-Proteina 推理所需的 motif_info.csv
+    提取某条链中所有标准的氨基酸残基
+    返回: [(PDB残基编号, 单字母氨基酸), ...]
     """
+    residues = []
+    for res in chain:
+        # res.id 结构为 (hetero_flag, sequence_identifier, insertion_code)
+        # 我们只保留标准的氨基酸 (hetero_flag 变为空格)
+        if res.id[0] == ' ':
+            res_num = res.id[1]
+            res_name = THREE_TO_ONE.get(res.get_resname(), 'X')
+            if res_name != 'X':
+                residues.append((res_num, res_name))
+    return residues
+
+def get_contiguous_blocks(res_nums):
+    """
+    将一串残基编号划分为连续的块。
+    例如 [1,2,3, 5,6,7] -> [(1,3), (5,7)]
+    """
+    if not res_nums: return []
+    blocks = []
+    start = res_nums[0]
+    prev = res_nums[0]
     
-    # 1. 读取 JSON 数据
-    # 如果文件是一行一个 JSON 对象 (JSONL 格式)
+    for num in res_nums[1:]:
+        # 允许编号相同 (应对可能的插入码情况，如 100A, 100B 编号都是100)
+        if num == prev + 1 or num == prev:
+            prev = num
+        else:
+            blocks.append((start, prev))
+            start = num
+            prev = num
+    blocks.append((start, prev))
+    return blocks
+
+def format_blocks(chain_id, blocks):
+    """将区块格式化为 contig_string 格式，如 ['L1-10', 'L15-30']"""
+    parts = []
+    for start, end in blocks:
+        # La-Proteina / RFdiffusion 格式: 即使是一个氨基酸最好也写 start-end
+        parts.append(f"{chain_id}{start}-{end}")
+    return parts
+
+def generate_motif_csv(json_path, pdb_dir, output_csv_path, target_cdr="cdrh3"):
     data_list = []
     with open(json_path, 'r') as f:
         for line in f:
-            line = line.strip()
-            if line:
+            if line.strip():
                 try:
                     data_list.append(json.loads(line))
                 except json.JSONDecodeError:
-                    pass # 跳过空行或错误行
-    
-    # 如果文件是标准的 JSON 列表格式 [{}, {}]，请取消下面这行的注释并注释掉上面的循环
-    # with open(json_path, 'r') as f: data_list = json.load(f)
-
-    print(f"读取到 {len(data_list)} 条数据。")
-
+                    pass
+                    
+    print(f"读取到 {len(data_list)} 条 JSON 数据，开始解析 PDB...")
     csv_rows = []
+    parser = PDBParser(QUIET=True)
 
     for entry in data_list:
         pdb_name = entry.get('pdb', 'unknown')
-        pdb_path = entry.get('pdb_data_path')
         
-        # 确保 PDB 路径存在 (可选检查)
+        # 尝试从 entry 里获取 pdb_path，如果没有就用传入的 pdb_dir 拼接
+        pdb_path = entry.get('pdb_data_path')
+        if not pdb_path or not os.path.exists(pdb_path):
+            pdb_path = os.path.join(pdb_dir, f"{pdb_name}.pdb")
+            
         if not os.path.exists(pdb_path):
-            print(f"[警告] PDB 文件未找到: {pdb_path}，跳过。")
+            print(f"[警告] 找不到 PDB: {pdb_path}，跳过。")
             continue
 
-        # 获取链 ID
         h_chain_id = entry.get('heavy_chain', 'H')
         l_chain_id = entry.get('light_chain', 'L')
         ag_chain_ids = entry.get('antigen_chains', [])
-
-        # 获取序列
-        h_seq = entry.get('heavy_chain_seq', '')
-        l_seq = entry.get('light_chain_seq', '')
-        
-        # 获取 CDR 序列 (用于定位)
         cdr_seq = entry.get(f'{target_cdr}_seq', '')
-        
-        if not h_seq or not cdr_seq:
-            print(f"[跳过] {pdb_name} 缺少重链或 CDR 序列信息。")
+
+        if not cdr_seq:
             continue
 
-        # --- 核心逻辑：通过序列匹配定位 Mask 区域 ---
-        # 我们需要在 h_seq 中找到 cdr_seq 的位置
-        # 注意：这里假设 JSON 中的 seq 与 PDB 文件中的残基是 1:1 对应的连续索引
+        try:
+            structure = parser.get_structure(pdb_name, pdb_path)
+            model = structure[0]
+        except Exception as e:
+            print(f"[警告] 解析 PDB 失败 {pdb_name}: {e}")
+            continue
+
+        contig_parts = []
+        total_length = 0
+
+        # --- 1. 处理抗原链 (Antigen) ---
+        for ag_id in ag_chain_ids:
+            if ag_id in model:
+                ag_residues = get_chain_residues(model[ag_id])
+                ag_nums = [num for num, _ in ag_residues]
+                ag_blocks = get_contiguous_blocks(ag_nums)
+                contig_parts.extend(format_blocks(ag_id, ag_blocks))
+                total_length += len(ag_residues)
+
+        # --- 2. 处理轻链 (Light Chain) ---
+        if l_chain_id in model:
+            l_residues = get_chain_residues(model[l_chain_id])
+            l_nums = [num for num, _ in l_residues]
+            l_blocks = get_contiguous_blocks(l_nums)
+            contig_parts.extend(format_blocks(l_chain_id, l_blocks))
+            total_length += len(l_residues)
+
+        # --- 3. 处理重链 (Heavy Chain) ---
+        if h_chain_id not in model:
+            print(f"[警告] {pdb_name} 中找不到重链 {h_chain_id}，跳过。")
+            continue
+            
+        h_residues = get_chain_residues(model[h_chain_id])
+        h_seq = "".join([aa for _, aa in h_residues])
+        h_nums = [num for num, _ in h_residues]
+
+        # 在 PDB 实际提取的序列中查找 CDR
         start_idx = h_seq.find(cdr_seq)
-        
         if start_idx == -1:
-            print(f"[跳过] {pdb_name} 重链序列中未找到 CDR 序列。")
+            print(f"[警告] {pdb_name} 的 PDB 重链中找不到 CDR 序列 '{cdr_seq}'，跳过。")
             continue
             
         end_idx = start_idx + len(cdr_seq)
-        
-        # 转换为 1-based 索引 (La-Proteina/PDB 通常使用 1-based)
-        # Python: 0...start_idx-1 (是前段), start_idx...end_idx-1 (是CDR), end_idx... (是后段)
-        # 1-based:
-        #   前段骨架: 1 到 start_idx
-        #   CDR: start_idx+1 到 end_idx (我们要 Mask 掉这部分)
-        #   后段骨架: end_idx+1 到 len(h_seq)
-        
-        fixed_parts = []
-        
-        # 1. 重链骨架 (Mask 掉 CDR)
-        # 如果 CDR 在最开头 (不太可能)，则没有前段
-        if start_idx > 0:
-            fixed_parts.append(f"{h_chain_id}1-{start_idx}")
-        
-        # 如果 CDR 在最末尾，则没有后段
-        if end_idx < len(h_seq):
-            fixed_parts.append(f"{h_chain_id}{end_idx + 1}-{len(h_seq)}")
-            
-        # 2. 轻链 (全部固定)
-        if l_seq:
-            fixed_parts.append(f"{l_chain_id}1-{len(l_seq)}")
-        
-        # 3. 抗原链 (全部固定)
-        for ag_chain in ag_chain_ids:
-            # 抗原长度未知，但在 La-Proteina 中，如果只写链名 (例如 "A")，通常表示整条链
-            # 或者我们需要读取 PDB 获取长度。为了安全，如果 generate.py 支持 "A"，则用 "A"
-            # 如果不支持，可以尝试读取 PDB。
-            # 根据您之前的 generate.py，它支持解析 contig string。
-            # 最稳妥的方式是：如果知道长度最好，如果不知道，La-Proteina 的 Dataset 可能需要处理。
-            # 这里我们假设简单的 "ChainID" 格式被支持，或者我们假设抗原保留所有原子。
-            fixed_parts.append(f"{ag_chain}") 
 
-        # 构造 contig_string
-        contig_str = "/".join(fixed_parts)
+        # 前段骨架 (Framework 1)
+        fw1_nums = h_nums[:start_idx]
+        fw1_blocks = get_contiguous_blocks(fw1_nums)
+        contig_parts.extend(format_blocks(h_chain_id, fw1_blocks))
+        total_length += len(fw1_nums)
+
+        # 插入生成区间占位符 (CDR-H3)
+        h3_len = len(cdr_seq)
+        contig_parts.append(f"{h3_len}-{h3_len}")
+        total_length += h3_len
+
+        # 后段骨架 (Framework 2)
+        fw2_nums = h_nums[end_idx:]
+        fw2_blocks = get_contiguous_blocks(fw2_nums)
+        contig_parts.extend(format_blocks(h_chain_id, fw2_blocks))
+        total_length += len(fw2_nums)
+
+        # 组装最终的 contig string
+        contig_str = "/".join(contig_parts)
         
+        # 组装 segment_order (A;L;H)
+        order_list = []
+        for ag_id in ag_chain_ids:
+            if ag_id in model and ag_id not in order_list: order_list.append(ag_id)
+        if l_chain_id in model and l_chain_id not in order_list: order_list.append(l_chain_id)
+        if h_chain_id in model and h_chain_id not in order_list: order_list.append(h_chain_id)
+        segment_order = ";".join(order_list)
+
         csv_rows.append({
             "pdb_name": pdb_name,
-            "motif_pdb_path": pdb_path,
+            "motif_pdb_path": os.path.abspath(pdb_path),
             "contig_string": contig_str,
-            "atom_selection_mode": "all" # 或者 "backbone"，取决于你想给模型看什么
+            "atom_selection_mode": "all", # 或者 all_atom
+            "segment_order": segment_order,
+            "total_length": total_length
         })
 
-    # 保存 CSV
+    # 保存结果
     if csv_rows:
         df = pd.DataFrame(csv_rows)
         df.to_csv(output_csv_path, index=False)
-        print(f"成功生成 CSV 文件: {output_csv_path}")
-        print(f"包含样本数: {len(df)}")
-        print("示例 Contig String:", df.iloc[0]['contig_string'])
+        print(f"\n✅ 成功生成 CSV 文件: {output_csv_path}")
+        print(f"✅ 包含样本数: {len(df)}")
+        print(f"🔍 示例 {df.iloc[0]['pdb_name']}:")
+        print(f"  Contig: {df.iloc[0]['contig_string']}")
+        print(f"  Total Length: {df.iloc[0]['total_length']}")
+        print(f"  Segment Order: {df.iloc[0]['segment_order']}")
     else:
-        print("未生成任何有效数据。")
+        print("\n❌ 未生成任何有效数据。")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--json_path", type=str, default="sabdab_all.json", help="输入的 JSON 文件路径")
-    parser.add_argument("--job_id", type=int, default=0, help="Job ID，用于生成对应的文件名")
-    parser.add_argument("--task_name", type=str, default="antibody_test", help="任务名称")
+    parser.add_argument("--pdb_dir", type=str, default="./pdb", help="PDB 文件夹路径")
+    parser.add_argument("--job_id", type=int, default=0, help="Job ID")
+    parser.add_argument("--task_name", type=str, default="antibody_inference", help="任务名称")
     
     args = parser.parse_args()
-    
-    # 构造输出文件名：{task_name}_{job_id}_motif_info.csv
     output_filename = f"{args.task_name}_{args.job_id}_motif_info.csv"
     
-    generate_motif_csv(args.json_path, output_filename, target_cdr="cdrh3")
+    generate_motif_csv(args.json_path, args.pdb_dir, output_filename, target_cdr="cdrh3")

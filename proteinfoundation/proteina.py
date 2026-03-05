@@ -545,9 +545,11 @@ class Proteina(L.LightningModule):
             self.predict_for_sampling, n_recycle=self.inf_cfg.get("n_recycle", 0)
         )
 
-        # ===================== [终极修复：同时编码位置与旋转，并修复字典结构] =====================
+        # ===================== [终极修复：坐标系归零与还原] =====================
         fixed_context = None
         fixed_mask = None
+        motif_com = None # 新增：用于保存 PDB 真实坐标的质心
+
         if "x_motif" in batch and "seq_motif_mask" in batch:
             fixed_context = {}
             
@@ -559,7 +561,30 @@ class Proteina(L.LightningModule):
                 else:
                     motif_batch[k] = v
 
-            # 固定 CA 坐标 (bb_ca)
+            # ---------------- 【核心修复 1：坐标中心化 (Zero-Centering)】 ----------------
+            # 神经网络没见过绝对坐标！必须把 Framework 的质心平移到原点 (0,0,0)
+            mask_bool = motif_batch["seq_motif_mask"].bool()
+            ca_coords = motif_batch["x_motif"][:, :, 1, :] 
+            
+            motif_com_list = []
+            for i in range(ca_coords.shape[0]):
+                # 计算已知 Framework 区域的质心
+                com = ca_coords[i][mask_bool[i]].mean(dim=0)
+                motif_com_list.append(com)
+            motif_com = torch.stack(motif_com_list) # [B, 3]
+            
+            # 强行将输入的坐标全部拉回原点
+            centered_x_motif = motif_batch["x_motif"] - motif_com.view(-1, 1, 1, 3)
+            motif_batch["x_motif"] = centered_x_motif
+            
+            # 同步更新原始 batch
+            if batch["x_motif"].dim() == 5:
+                batch["x_motif"] = centered_x_motif.unsqueeze(0)
+            else:
+                batch["x_motif"] = centered_x_motif
+            # -------------------------------------------------------------------------
+
+            # 提取原点化后的 CA 坐标用于 Repainting
             fixed_context["bb_ca"] = motif_batch["x_motif"][:, :, 1, :]
             
             # 2. 调用 AutoEncoder 固定局部旋转方向 (local_latents)
@@ -568,16 +593,12 @@ class Proteina(L.LightningModule):
                 motif_batch["coords_nm"] = motif_batch["x_motif"]
                 motif_batch["coords"] = motif_batch["x_motif"]
                 
-                # =================== 【终极安全锁：修复 CUDA 越界】 ===================
-                # CDR 的未知序列常被标记为 20/21，F.one_hot(..., 20) 遇到 >=20 的值会直接导致 CUDA 崩溃！
-                # 强行把它们压制在 0~19 之间，即可完美绕过这个坑。
+                # 压制越界序列
                 motif_batch["residue_type"] = torch.clamp(motif_batch["seq_motif"], min=0, max=19)
-                # =======================================================================
                 
                 if "motif_mask" in motif_batch:
                     motif_batch["coord_mask"] = motif_batch["motif_mask"]
                 
-                # [关键补丁]：伪造 mask_dict 避免 AutoEncoder 报 KeyError
                 if "mask_dict" not in motif_batch and "mask" in motif_batch:
                     motif_batch["mask_dict"] = {
                         "coords": motif_batch["mask"].unsqueeze(-1).unsqueeze(-1),
@@ -589,7 +610,6 @@ class Proteina(L.LightningModule):
                 fixed_context["local_latents"] = encoded_motif["z_latent"]
             
             fixed_mask = motif_batch["seq_motif_mask"]
-        # ======================================================================================
 
         # [新增] 确保 batch 包含 x_1 (Clean Samples)，用于 Inpainting
         # 调用之前定义的辅助函数
@@ -625,13 +645,21 @@ class Proteina(L.LightningModule):
         # ================== 【最后一步：打补丁，完美物理缝合】 ==================
         if "x_motif" in batch and "seq_motif_mask" in batch:
             # 拿到真实的 37 原子坐标 (转回埃 Å)
-            true_coords = motif_batch["x_motif"] * 10.0
+            # 必须加上刚才减去的质心 motif_com，还原回真实的 PDB 绝对位置！
+            true_coords = (centered_x_motif + motif_com.view(-1, 1, 1, 3)) * 10.0
             true_seq = motif_batch["seq_motif"]
             mask = motif_batch["seq_motif_mask"]  # [B, N]
             
             b_size = mask.shape[0]
             for i in range(b_size):
-                # 强行用真实的原子覆盖掉 Decoder 还原出来的带误差原子
+                # ---------------- 【核心修复 2：绝对坐标还原】 ----------------
+                # 此时生成的 sample_prots 还在原点(0,0,0)附近
+                # 必须把它整体平移回 PDB 的绝对位置，否则一拼接就会产生 23 埃的巨大断层！
+                com_angstrom = motif_com[i].to(sample_prots["coors"].device) * 10.0
+                sample_prots["coors"][i] += com_angstrom.view(1, 1, 3)
+                # -------------------------------------------------------------
+                
+                # 坐标整体对齐后，再用真实的 Framework 坐标覆盖，严丝合缝
                 sample_prots["coors"][i][mask[i]] = true_coords[i][mask[i]].to(sample_prots["coors"].device)
                 sample_prots["residue_type"][i][mask[i]] = true_seq[i][mask[i]].to(sample_prots["residue_type"].device)
         # ========================================================================

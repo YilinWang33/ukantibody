@@ -4,7 +4,9 @@ defaults:
   - _self_
 
 ckpt_path: ./store/antibody_cdr_finetune_motif/checkpoints
-ckpt_name: last-EMA.ckpt
+#ckpt_path: ./checkpoints_laproteina
+#ckpt_name: LD4_motif_idx_aa.ckpt
+ckpt_name: last.ckpt
 autoencoder_ckpt_path: ./checkpoints_laproteina/AE3_motif.ckpt
 
 generation:
@@ -86,7 +88,7 @@ generation:
 
       5mes_cdrh3:
         contig_string: "A172-322/L2-9/L11-30/L35-57/L65-72/L74-80/L83-110/L113-129/H1-9/H11-30/H35-59/H62-72/H74-104/12-12/H118-129"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5mes.pdb"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/5mes.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
         motif_min_length: 382

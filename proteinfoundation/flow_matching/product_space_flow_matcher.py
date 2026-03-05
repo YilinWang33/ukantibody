@@ -492,8 +492,47 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                             
                             # Overwrite
                             x[dm] = m * x_fixed_noisy + (~m) * x[dm]
+                # ================== 【新增算法：几何物理弹簧引导 (Spring Guidance)】 ==================
+                # 技术亮点：通过梯度下降注入先验物理约束，解决潜空间流匹配易导致断链和高 RMSD 的通病
+                if "bb_ca" in x and fixed_mask is not None:
+                    x_bb = x["bb_ca"] # 获取当前步骤的 CA 坐标 [B, N, 3], 单位 nm
+                    m_bool = fixed_mask.to(device) # [B, N]
+                    
+                    # 动态学习率：随着生成逼近真实 (t 变大)，弹簧拉力越来越强
+                    t_scalar = t_next["bb_ca"].view(-1).mean().item() if "bb_ca" in t_next else 1.0
+                    spring_lr = 0.15 * (t_scalar + 0.1) 
+                    target_dist = 0.38 # 物理常识：C-alpha 之间的肽键距离约为 3.8 Å = 0.38 nm
+                    spring_iters = 5   # 每步 ODE 迭代 5 次弹簧松弛
+                    
+                    for _ in range(spring_iters):
+                        # 计算相邻氨基酸 CA 的向量与距离
+                        delta = x_bb[:, 1:, :] - x_bb[:, :-1, :] # [B, N-1, 3]
+                        dist = torch.norm(delta, dim=-1, keepdim=True) # [B, N-1, 1]
+                        
+                        # 计算胡克定律弹簧力 (拉扯偏离 0.38nm 的部分)
+                        force_magnitude = dist - target_dist
+                        force_dir = delta / (dist + 1e-6)
+                        force = force_magnitude * force_dir # [B, N-1, 3]
+                        
+                        # 将力反作用于左右两个原子
+                        update = torch.zeros_like(x_bb)
+                        update[:, :-1, :] -= force  # 拉拢 i
+                        update[:, 1:, :] += force   # 拉拢 i+1
+                        
+                        # 【核心】只允许更新“需要生成的 CDR 区域 (mask=0)”，绝对不能破坏已固定的 Framework
+                        m_float = (~m_bool).float()
+                        if x_bb.ndim == 3:
+                            m_float = m_float.unsqueeze(-1)
+                        elif x_bb.ndim == 4:
+                            m_float = m_float.unsqueeze(-1).unsqueeze(-1)
+                            
+                        # 施加弹簧位移
+                        x_bb = x_bb - spring_lr * update * m_float
+                        
+                    # 把受物理力修正后的坐标写回 x
+                    x["bb_ca"] = x_bb
+                # =========================================================================================
 
-                    # ==============================================================================
                 # ========================= [DEBUG 3 插入位置 开始] =========================
                 # ==============================================================================
                 # 只在 bb_ca 这个模态上打印，并且为了避免刷屏，每 10 步打印一次，以及最后一步打印
