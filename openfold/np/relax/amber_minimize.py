@@ -434,7 +434,8 @@ def _run_one_iteration(
     exclude_residues = exclude_residues or []
 
     # Assign physical dimensions.
-    tolerance = tolerance * ENERGY
+    # tolerance = tolerance * ENERGY
+    tolerance = tolerance * unit.kilojoules_per_mole / unit.nanometer
     stiffness = stiffness * ENERGY / (LENGTH ** 2)
 
     start = time.perf_counter()

@@ -3,10 +3,10 @@ defaults:
   - generation: motif
   - _self_
 
-ckpt_path: ./store/antibody_cdr_finetune_motif/checkpoints
-#ckpt_path: ./checkpoints_laproteina
-#ckpt_name: LD4_motif_idx_aa.ckpt
-ckpt_name: last.ckpt
+#ckpt_path: ./store/antibody_cdr_finetune_motif/checkpoints
+ckpt_path: ./checkpoints_laproteina
+ckpt_name: LD4_motif_idx_aa.ckpt
+#ckpt_name: last.ckpt
 autoencoder_ckpt_path: ./checkpoints_laproteina/AE3_motif.ckpt
 
 generation:
@@ -114,7 +114,8 @@ generation:
         segment_order: "N;L;H"
 
   metric:
-    compute_designability: False
+    compute_designability: True
+    compute_codesignability: True    # 可选：设为 true 也可以开启针对天然序列的对照评估
     compute_novelty_pdb: False
     compute_novelty_afdb: False
     compute_fid: False

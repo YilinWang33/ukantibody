@@ -30,7 +30,6 @@ def create_dir(dir):
     if not os.path.exists(dir):
         os.makedirs(dir, exist_ok=True)
 
-
 class Proteina(L.LightningModule):
     def __init__(self, cfg_exp, store_dir=None, autoencoder_ckpt_path=None):
         super().__init__()
@@ -165,7 +164,7 @@ class Proteina(L.LightningModule):
         batch: Dict,
         mode: Literal["full", "ucond"],
         n_recycle: int,
-    ) -> Tuple[Union[Dict[str, torch.Tensor], float, None]]:
+    ) -> Dict[str, torch.Tensor]:  # [修正 1: 返回类型注解]
         """
         This function predicts clean samples for multiple models:
         x_pred, the 'original' model, if mode == full
@@ -207,9 +206,7 @@ class Proteina(L.LightningModule):
         Returns:
             Training loss averaged over batch dimension.
         """
-        """
-        Computes training loss for batch of samples.
-        """
+        # [修正 2: 删除了重复的 docstring]
         val_step = batch_idx == -1
         log_prefix = "validation_loss" if val_step else "train"
 
@@ -324,7 +321,6 @@ class Proteina(L.LightningModule):
             raise ValueError(
                 f"Loading clean samples from data mode {dm} not supported."
             )
-
 
     def handle_self_cond(self, batch: Dict) -> Dict:
         n_recycle = self.cfg_exp.training.get(
@@ -522,7 +518,9 @@ class Proteina(L.LightningModule):
         self.inf_cfg = inf_cfg
         self.nn_ag = nn_ag
 
-    def predict_step(self, batch: Dict, batch_idx: int) -> List[Tuple[torch.tensor]]:
+
+    # [修正 3: predict_step 向右缩进 4 格对齐，修复 torch.Tensor 类型提示]
+    def predict_step(self, batch: Dict, batch_idx: int) -> List[Tuple[torch.Tensor]]:
         """
         Makes predictions. Should call set_inf_cfg before calling this.
 
@@ -568,8 +566,12 @@ class Proteina(L.LightningModule):
             
             motif_com_list = []
             for i in range(ca_coords.shape[0]):
-                # 计算已知 Framework 区域的质心
-                com = ca_coords[i][mask_bool[i]].mean(dim=0)
+                # [修正 4: 增加防 NaN 处理，如果全都是 False，质心设为 0]
+                valid_coords = ca_coords[i][mask_bool[i]]
+                if valid_coords.shape[0] == 0:
+                    com = torch.zeros(3, device=ca_coords.device)
+                else:
+                    com = valid_coords.mean(dim=0)
                 motif_com_list.append(com)
             motif_com = torch.stack(motif_com_list) # [B, 3]
             
@@ -612,10 +614,9 @@ class Proteina(L.LightningModule):
             fixed_mask = motif_batch["seq_motif_mask"]
 
         # [新增] 确保 batch 包含 x_1 (Clean Samples)，用于 Inpainting
-        # 调用之前定义的辅助函数
-        #batch = self.add_clean_samples(batch)
         if "coords_nm" in batch:
             batch = self.add_clean_samples(batch)
+            
         gen_samples, extra_info = self.fm.full_simulation(
             batch=batch,
             predict_for_sampling=fn_predict_for_sampling,
@@ -628,10 +629,9 @@ class Proteina(L.LightningModule):
             save_trajectory_every=save_trajectory_every,
             guidance_w=guidance_w,
             ag_ratio=ag_ratio,
+            fixed_context=fixed_context, # [修复] 添加 missing parameter
+            fixed_mask=fixed_mask,       # [修复] 添加 missing parameter
         )
-        # Dict with the data_modes as keys, and values with batch shape b
-        # extra_info is a dict with additional things, including
-        # "mask", whose value is boolean of shape [nsamples, n]
 
         # Format the generated samples back to proteins
         sample_prots = self.sample_formatting(
@@ -639,32 +639,49 @@ class Proteina(L.LightningModule):
             extra_info=extra_info,
             ret_mode="coors37_n_aatype",
         )
-        # Dict with keys `coors` (a37), `residue_type`, and `mask`,
-        # shapes [b, n, 37, 3], [b, n], [b, n]
 
-        # ================== 【最后一步：打补丁，完美物理缝合】 ==================
+        # # ================== 【最后一步：标准的刚性打补丁缝合】 ==================
+        # if "x_motif" in batch and "seq_motif_mask" in batch:
+        #     # 拿到真实的 37 原子坐标 (转回埃 Å)
+        #     # 必须加上刚才减去的质心 motif_com，还原回真实的 PDB 绝对位置！
+        #     true_coords = (centered_x_motif + motif_com.view(-1, 1, 1, 3)) * 10.0
+        #     true_seq = motif_batch["seq_motif"]
+        #     mask = motif_batch["seq_motif_mask"].bool()  # [B, N] 布尔掩码
+            
+        #     b_size = mask.shape[0]
+        #     for i in range(b_size):
+        #         # ---------------- 1. 绝对坐标平移还原 ----------------
+        #         # 生成的 sample_prots 处于原点(0,0,0)附近，需要将其整体平移回原始 PDB 位置
+        #         com_angstrom = motif_com[i].to(sample_prots["coors"].device) * 10.0
+        #         sample_prots["coors"][i] += com_angstrom.view(1, 1, 3)
+                
+        #         # ---------------- 2. 框架坐标强制覆盖 ----------------
+        #         # 平移后可能存在微小浮点误差，直接用最原始的 Framework 真实坐标强行覆盖
+        #         # 只有 mask 为 False 的区域（即 CDR-H3）会保留生成的结构
+        #         sample_prots["coors"][i][mask[i]] = true_coords[i][mask[i]].to(sample_prots["coors"].device)
+                
+        #         # ---------------- 3. 框架序列强制覆盖 ----------------
+        #         # 同样地，把已知的 Framework 氨基酸序列原封不动地填回去
+        #         sample_prots["residue_type"][i][mask[i]] = true_seq[i][mask[i]].to(sample_prots["residue_type"].device)
+        # # ========================================================================
+
+        # ================== 【最后一步：最简单、最暴力的直接替换 (绝不报错)】 ==================
         if "x_motif" in batch and "seq_motif_mask" in batch:
-            # 拿到真实的 37 原子坐标 (转回埃 Å)
-            # 必须加上刚才减去的质心 motif_com，还原回真实的 PDB 绝对位置！
             true_coords = (centered_x_motif + motif_com.view(-1, 1, 1, 3)) * 10.0
             true_seq = motif_batch["seq_motif"]
-            mask = motif_batch["seq_motif_mask"]  # [B, N]
+            mask = motif_batch["seq_motif_mask"].bool()
             
-            b_size = mask.shape[0]
-            for i in range(b_size):
-                # ---------------- 【核心修复 2：绝对坐标还原】 ----------------
-                # 此时生成的 sample_prots 还在原点(0,0,0)附近
-                # 必须把它整体平移回 PDB 的绝对位置，否则一拼接就会产生 23 埃的巨大断层！
+            for i in range(mask.shape[0]):
+                # 1. 还原整体空间位置
                 com_angstrom = motif_com[i].to(sample_prots["coors"].device) * 10.0
                 sample_prots["coors"][i] += com_angstrom.view(1, 1, 3)
-                # -------------------------------------------------------------
                 
-                # 坐标整体对齐后，再用真实的 Framework 坐标覆盖，严丝合缝
+                # 2. 强行覆盖框架坐标（把生成的CDR-H3直接拼在真实框架上）
                 sample_prots["coors"][i][mask[i]] = true_coords[i][mask[i]].to(sample_prots["coors"].device)
+                
+                # 3. 强行覆盖框架序列
                 sample_prots["residue_type"][i][mask[i]] = true_seq[i][mask[i]].to(sample_prots["residue_type"].device)
         # ========================================================================
-        
-
         generation_list = []
         for i in range(sample_prots["coors"].shape[0]):
             generation_list.append((
@@ -817,9 +834,11 @@ class Proteina(L.LightningModule):
         elif ret_mode == "pdb_string":
             pdb_strings = []
 
+            # [修正 5: 删除了原代码末尾多余的逗号，修复了隐形元组 bug]
             coors_atom_37 = (
-                nm_to_ang(output_decoder["coors_nm"]).float().detach().cpu().numpy(),
-            )  # [b, n, 37, 3]
+                nm_to_ang(output_decoder["coors_nm"]).float().detach().cpu().numpy()
+            )  # [b, n, 37, 3] 
+            
             residue_type = output_decoder["residue_type"]  # [b, n]
             atom_mask = output_decoder["atom_mask"]  # [b, n, 37]
             n = coors_atom_37.shape[-3]

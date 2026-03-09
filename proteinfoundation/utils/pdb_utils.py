@@ -133,7 +133,12 @@ def write_prot_to_pdb(
                 pdb_prot = to_pdb(prot, model=t + 1, add_end=False)
                 f.write(pdb_prot)
         elif prot_pos.ndim == 3:
-            atom37_mask = np.sum(np.abs(prot_pos), axis=-1) > 1e-7
+            #atom37_mask = np.sum(np.abs(prot_pos), axis=-1) > 1e-7
+            # 修复：使用标准的化学掩码，如果生成的是GLY，就严格屏蔽它的侧链原子
+            if aatype is not None:
+                atom37_mask = residue_constants.STANDARD_ATOM_MASK[aatype]
+            else:
+                atom37_mask = np.sum(np.abs(prot_pos), axis=-1) > 1e-7
             prot = create_full_prot(
                 prot_pos,
                 atom37_mask,

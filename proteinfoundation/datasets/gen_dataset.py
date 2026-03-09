@@ -246,7 +246,7 @@ class GenDataset(Dataset):
         return out_nres, out_cath_codes, out_nsamples
 
     def generate_motif_info(self, motif_cfg, nsamples, motif_csv_path):
-        # 【修改这里】：解包时增加 res_indices, chain_indices
+        # 解包时增加 res_indices, chain_indices
         lengths, motif_masks, x_motifs, residue_types, outstrs, res_indices, chain_indices = parse_motif(
             nsamples=nsamples, **motif_cfg
         )
@@ -257,13 +257,14 @@ class GenDataset(Dataset):
         res_indices = [res_indices[i] for i in idx]        # 【新增】
         chain_indices = [chain_indices[i] for i in idx]    # 【新增】
         
+        # ======= 【修复：注释掉此处的中心化】 =======
         # center motifs to origin
-        for i in range(len(x_motifs)):
-            motif_center = mean_w_mask(
-                x_motifs[i].flatten(0, 1), motif_masks[i].flatten(0, 1)
-            ).unsqueeze(0)
-            x_motifs[i] = x_motifs[i] - motif_center
-            x_motifs[i] = x_motifs[i] * motif_masks[i][..., None]
+        # for i in range(len(x_motifs)):
+        #     motif_center = mean_w_mask(
+        #         x_motifs[i].flatten(0, 1), motif_masks[i].flatten(0, 1)
+        #     ).unsqueeze(0)
+        #     x_motifs[i] = x_motifs[i] - motif_center
+        #     x_motifs[i] = x_motifs[i] * motif_masks[i][..., None]
             
         # Only save CSV for contig_string (residue/range) case
         if "motif_atom_spec" not in motif_cfg or motif_cfg["motif_atom_spec"] is None:
@@ -276,7 +277,7 @@ class GenDataset(Dataset):
                 segment_order=motif_cfg["segment_order"],
             )
             
-        # 【修改这里】：把解析好的 index 信息返回出去
+        # 把解析好的 index 信息返回出去
         return motif_masks, x_motifs, residue_types, res_indices, chain_indices
 
     def flatten(self, max_nsamples: int):

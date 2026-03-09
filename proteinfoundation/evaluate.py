@@ -202,8 +202,8 @@ def compute_traditional_metrics(
 
         # create tmp_dir for this sample
         tmp_dir = os.path.splitext(pdb_path)[0]  # removes extension ".pdb"
-        assert not os.path.exists(tmp_dir), f"tmp_dir {tmp_dir} already exists"
-        os.makedirs(tmp_dir, exist_ok=False)
+        #assert not os.path.exists(tmp_dir), f"tmp_dir {tmp_dir} already exists"
+        os.makedirs(tmp_dir, exist_ok=True)
 
         # Initialize motif-related variables
         motif_index = None
@@ -252,14 +252,33 @@ def compute_traditional_metrics(
             logger.info(f"Gen residue type: {gen_residue_type.shape}")
             motif_sequence_mask = motif_mask_full.any(dim=1)
 
+            # motif_index = []
+            # motif_residue_indices = []
+            # for i in motif_sequence_mask.nonzero():
+            #     # Convert to 1-indexed for ProteinMPNN (PDB residue numbering)
+            #     motif_index.append(f"A{i.item() + 1}")
+            #     # Keep 0-indexed for tensor operations
+            #     motif_residue_indices.append(i.item())
+
+            # 获取真实的链名(A, H, L 等)
+            chain_ids_in_file = []
+            with open(pdb_path, 'r') as f:
+                for line in f:
+                    if line.startswith("ATOM") or line.startswith("HETATM"):
+                        chain_ids_in_file.append(line[21])
+            real_unique_chains = sorted(list(set(chain_ids_in_file)))
+
             motif_index = []
             motif_residue_indices = []
             for i in motif_sequence_mask.nonzero():
-                # Convert to 1-indexed for ProteinMPNN (PDB residue numbering)
-                motif_index.append(f"A{i.item() + 1}")
-                # Keep 0-indexed for tensor operations
-                motif_residue_indices.append(i.item())
-
+                idx = i.item()
+                c_idx = int(gen_prot.chain_index[idx])
+                chain_letter = real_unique_chains[c_idx]  # 使用真实的链字母
+                res_num = int(gen_prot.residue_index[idx])
+                
+                motif_index.append(f"{chain_letter}{res_num}")
+                motif_residue_indices.append(idx)
+                
             # Direct motif RMSD computation (generated structure vs ground truth motif)
             if cfg_metric.get("compute_motif_rmsd", True):
                 for m in motif_rmsd_modes:

@@ -246,26 +246,13 @@ def extract_motif_from_pdb(
     ] = "ca",
     coors_to_nm: bool = True,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Extracting motif positions from input protein structure.
-
-    Args:
-        position (str): Motif region of input protein. DEMO: "A1-7/A28-79" corresponds defines res1-7 and res28-79 in chain A to be motif.
-        pdb_path (str): Input protein structure, can either be a path or an AtomArray.
-        motif_only (bool): Whether the pdb file only contains the motif positions.
-        motif_atom_spec (str, optional): If provided, specifies motif atoms in the format "A64: [O, CG]; ...". If set, extraction is done at the atom level and only the specified atoms are returned as atom37 tensors for the corresponding residues. If not set, extraction is done at the residue/range level as before.
-        atom_selection_mode (str): Mode for selecting atoms in classic mode. Options: "ca", "bb3o", "all_atom", "tip_atoms". Only used when motif_atom_spec is None.
-        coors_to_nm (bool): Whether to convert motif coordinates to nanometers.
-
-    Returns:
-        motif_mask (torch.Tensor): Boolean array for atom37 mask for the motif positions. (n_motif_res, 37)
-        x_motif (torch.Tensor): Motif positions in atom37 format. (n_motif_res, 37, 3)
-        residue_type (torch.Tensor): Residue types of the motif. (n_motif_res)
-    """
+    """Extracting motif positions from input protein structure."""
+    
     if motif_atom_spec is not None:
+        # ======= (保持原来的逻辑不变) =======
         logger.info(f"Using atom-level motif specification: {motif_atom_spec[:100]}...")
         array = strucio.load_structure(pdb_path, model=1)
         motif_atoms = parse_motif_atom_spec(motif_atom_spec)
-        # Get unique (chain, res_id) pairs in order
         unique_residues = []
         seen = set()
         for chain, res_id, _ in motif_atoms:
@@ -277,12 +264,10 @@ def extract_motif_from_pdb(
         x_motif = torch.zeros((n_res, 37, 3), dtype=torch.float)
         residue_type = torch.ones((n_res), dtype=torch.int64) * restype_num
         for i, (chain_id, res_id) in enumerate(unique_residues):
-            # Find all atom names for this residue in the motif spec
             atom_names = []
             for c, r, names in motif_atoms:
                 if c == chain_id and r == res_id:
                     atom_names.extend(names)
-            # Subset array for this residue
             res_mask = (array.chain_id == chain_id) & (array.res_id == res_id)
             res_atoms = array[res_mask]
             if len(res_atoms) == 0:
@@ -298,8 +283,9 @@ def extract_motif_from_pdb(
                     else:
                         x_motif[i, atom37_idx] = torch.as_tensor(atom.coord)
         return motif_mask, x_motif, residue_type
+        
     else:
-        # Otherwise, use the old logic (residue/range based)
+        # ======= (保持原来的逻辑不变) =======
         position = position.split("/")
         ALPHABET = "ABCDEFGHJKLMNOPQRSTUVWXYZ"
         array = strucio.load_structure(pdb_path, model=1)
@@ -317,18 +303,18 @@ def extract_motif_from_pdb(
                     seen.add(chain_id)
             else:
                 i = i.replace(chain_id, "")
-                if "-" not in i:  # Single-residue motif
+                if "-" not in i:
                     start = end = int(i)
                 else:
                     start, end = i.split("-")
                     start, end = int(start), int(end)
                 atom_mask = atom_mask & (array.res_id <= end) & (array.res_id >= start)
             motif_array.append(array[atom_mask])
+            
         motif = motif_array[0]
         for i in range(len(motif_array) - 1):
             motif += motif_array[i + 1]
-        # Convert motif to atom37 format
-        # Get ordered unique residues by (chain_id, res_id) pairs while preserving order
+            
         seen = set()
         unique_residues = []
         for chain, resid in zip(motif.chain_id, motif.res_id):
@@ -337,33 +323,26 @@ def extract_motif_from_pdb(
                 unique_residues.append((chain, resid))
         n_res = len(unique_residues)
 
-        # Initialize output arrays
         motif_mask = torch.zeros((n_res, 37), dtype=torch.bool)
         x_motif = torch.zeros((n_res, 37, 3), dtype=torch.float)
         residue_type = torch.ones((n_res), dtype=torch.int64) * restype_num
 
-        # Map each residue's atoms to atom37 format
         for i, (chain_id, res_id) in enumerate(unique_residues):
-            # Get atoms for this specific residue
             res_mask = (motif.chain_id == chain_id) & (motif.res_id == res_id)
             res_atoms = motif[res_mask]
             res_type = restype_3to1.get(res_atoms[0].res_name, "UNK")
             residue_type[i] = restype_order.get(res_type, restype_num)
 
-            # Get available atom indices for this residue
             available_atom_indices = []
             for atom in res_atoms:
                 if atom.atom_name in atom_order:
                     atom37_idx = atom_order[atom.atom_name]
                     available_atom_indices.append(atom37_idx)
 
-            # Select atoms based on the specified mode
             if len(available_atom_indices) > 0:
                 selected_atom_indices = _select_motif_atoms(
                     available_atom_indices, atom_selection_mode, res_atoms[0].res_name
                 )
-
-                # Map selected atoms to their positions in atom37 format
                 for atom in res_atoms:
                     if atom.atom_name in atom_order:
                         atom37_idx = atom_order[atom.atom_name]
@@ -373,10 +352,12 @@ def extract_motif_from_pdb(
                                 x_motif[i, atom37_idx] = ang_to_nm(torch.as_tensor(atom.coord))
                             else:
                                 x_motif[i, atom37_idx] = torch.as_tensor(atom.coord)
-        # center motif
-        motif_center = mean_w_mask(x_motif.flatten(0, 1), motif_mask.flatten(0, 1)).unsqueeze(0)
-        x_motif = x_motif - motif_center
-        x_motif = x_motif * motif_mask[..., None]  # Is this needed?
+                                
+        # ======= 【修复：注释掉这三行，禁止底层对齐】 =======
+        # motif_center = mean_w_mask(x_motif.flatten(0, 1), motif_mask.flatten(0, 1)).unsqueeze(0)
+        # x_motif = x_motif - motif_center
+        # x_motif = x_motif * motif_mask[..., None] 
+
         return motif_mask, x_motif, residue_type
 
 
