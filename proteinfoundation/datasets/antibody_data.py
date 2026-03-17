@@ -100,7 +100,7 @@ class AntibodyDataset(Dataset):
             graph.residue_type = torch.tensor(
                 [resname_to_idx.get(r, 20) for r in graph.residues]
             ).long()
-            
+
             # 6. 注入 CDR 掩码 (区分 Motif 和生成区域)
             self._inject_cdr_mask(graph, entry)
 

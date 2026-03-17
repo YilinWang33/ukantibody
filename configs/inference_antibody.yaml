@@ -11,7 +11,7 @@ autoencoder_ckpt_path: ./checkpoints_laproteina/AE3_motif.ckpt
 
 generation:
   dataset:
-    motif_task_name: 5mes_cdrh3  # 👈 想跑哪个抗体就在这里换名字
+    motif_task_name: 5hi4_cdrh3 # 5mes_cdrh3  # 👈 想跑哪个抗体就在这里换名字
     nsamples: 10
 
     # ==========================================
@@ -32,59 +32,91 @@ generation:
         motif_max_length: 584
         segment_order: "A;L;H"
 
-      3nid_cdrh3:
-        contig_string: "A1-371/D1-373/L1-109/H1-96/12-12/H109-120"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3nid.pdb"
+      4qci_cdrh3:
+        # C链(抗原): 连续的 10-101
+        # L链缺失补齐: 10, 30-35, 58-64, 73, 81-82, 110-113
+        # H链缺失补齐: 10, 31-34, 60-61, 73
+        # 设计区域 CDRH3: 长度 13 (对应的PDB编号是 105 到 117)
+        contig_string: "C10-101/L3-9/L11-29/L36-57/L65-72/L74-80/L83-109/L114-129/H1-9/H11-30/H35-59/H62-72/H74-104/13-13/H118-129"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/4qci.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
-        motif_min_length: 973
-        motif_max_length: 973
-        segment_order: "A;D;L;H"
+        # 总长度计算: 抗原(92) + 轻链(106) + 重链骨架(108) + CDRH3(13) = 319
+        motif_min_length: 319
+        motif_max_length: 319
+        segment_order: "C;L;H"
 
-      5ggs_cdrh3:
-        contig_string: "Y1-114/D1-113/C1-96/13-13/C110-123"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5ggs.pdb"
-        atom_selection_mode: "all_atom"
-        motif_only: False
-        motif_min_length: 350
-        motif_max_length: 350
-        segment_order: "Y;D;C"
-
-      4cmh_cdrh3:
-        contig_string: "A1-160/C1-109/B1-96/13-13/B110-121"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/4cmh.pdb"
-        atom_selection_mode: "all_atom"
-        motif_only: False
-        motif_min_length: 390
-        motif_max_length: 390
-        segment_order: "A;C;B"
-
-      3h3b_cdrh3:
-        contig_string: "B1-136/E1-113/D1-95/13-13/D109-118"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3h3b.pdb"
-        atom_selection_mode: "all_atom"
-        motif_only: False
-        motif_min_length: 367
-        motif_max_length: 367
-        segment_order: "B;E;D"
+      # 5hi4_cdrh3:
+      #   contig_string: "B36-104/B108-129/C1-9/C11-30/C35-59/C62-72/C74-104/11-11/C118-129/D1-9/D11-30/D35-57/D65-72/D74-109/D114-129"
+      #   motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/5hi4.pdb"
+      #   atom_selection_mode: "all_atom"
+      #   motif_only: False
+      #   motif_min_length: 322
+      #   motif_max_length: 322
+      #   segment_order: "B;C;D"
 
       5hi4_cdrh3:
-        contig_string: "B1-91/D1-112/C1-96/11-11/C108-119"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/5hi4.pdb"
+        # 严格对应存在的片段，匹配原 PDB 中的 IMGT 编号跳跃
+        # B链缺失缝隙自动作为链内间断处理
+        # 待生成的 CDRH3 长度为 11 (对应原 C105-117)
+        contig_string: "B36-104/B108-129/D1-9/D11-30/D35-57/D65-72/D74-109/D114-129/C1-9/C11-30/C35-59/C62-72/C74-104/11-11/C118-129"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/5hi4.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
+        # 重建后总长度计算: 抗原 B(91) + 轻链 D(112) + 重链 C(119) = 322
         motif_min_length: 322
         motif_max_length: 322
         segment_order: "B;D;C"
 
-      3cx5_cdrh3:
-        contig_string: "P1-143/V1-107/U1-96/15-15/U112-123"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/3cx5.pdb"
+      5l6y_cdrh3:
+        contig_string: "C4-70/C86-112/L2-9/L11-29/L36-57/L65-72/L74-80/L83-109/L114-129/H1-9/H11-30/H35-59/H62-72/H74-104/15-15/H118-129"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/5l6y.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
-        motif_min_length: 373
-        motif_max_length: 373
-        segment_order: "P;V;U"
+        # 将这两个参数改为 324
+        motif_min_length: 324
+        motif_max_length: 324
+        segment_order: "C;L;H"
+
+      3uzq_cdrh3:
+        # B链(抗原): 299-393
+        # C链(轻链): 1-31, 34-57, 65-72, 74-80, 83-109, 114-127
+        # A链(重链): 3-9, 11-30, 35-59, 62-72, 74-104, 然后是 9个氨基酸的H3, 最后 118-128
+        contig_string: "B299-393/C1-31/C34-57/C65-72/C74-80/C83-109/C114-127/A3-9/A11-30/A35-59/A62-72/A74-104/9-9/A118-128"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/3uzq.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 320
+        motif_max_length: 320
+        segment_order: "B;C;A"
+
+      3h3b_cdrh3:
+        # B链: 0-177, 181-191 (共189)
+        # E链: 1-57, 65-72, 74-80, 83-109, 114-127 (共113，规避了IMGT虚拟gap)
+        # D链: 2-9, 11-30, 35-59, 62-72, 74-104 (共95), 13-13(需要生成的CDRH3), 118-127 (共10)
+        contig_string: "B0-177/B181-191/E1-57/E65-72/E74-80/E83-109/E114-127/D2-9/D11-30/D35-59/D62-72/D74-104/13-13/D118-127"
+        
+        # 路径对应 test.json 中的真实路径
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/3h3b.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        
+        # 重新计算的总长度: 189 + 113 + 95 + 13 + 10 = 420
+        motif_min_length: 420
+        motif_max_length: 420
+        segment_order: "B;E;D"
+
+
+      5j13_cdrh3:
+        # A链(抗原): 109个氨基酸; B链(轻链): 110个氨基酸; C链(重链): 108个框架氨基酸 + 15个需要设计的CDRH3
+        contig_string: "A28-61/A64-114/A133-156/B1-9/B11-29/B36-57/B65-72/B74-80/B83-110/B113-129/C1-9/C11-30/C35-59/C62-72/C74-104/15-15/C118-129"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/5j13.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        # 重新计算总长度：抗原(109) + 轻链(110) + 重链骨架(108) + 生成CDRH3(15) = 342
+        motif_min_length: 342
+        motif_max_length: 342
+        segment_order: "A;B;C"
 
       5mes_cdrh3:
         contig_string: "A172-322/L2-9/L11-30/L35-57/L65-72/L74-80/L83-110/L113-129/H1-9/H11-30/H35-59/H62-72/H74-104/12-12/H118-129"
@@ -104,14 +136,28 @@ generation:
         motif_max_length: 350
         segment_order: "Y;L;H"
 
-      1ncb_cdrh3:
-        contig_string: "N1-286/L1-109/H1-96/13-13/H110-121"
-        motif_pdb_path: "/DATA/disk3/yilin/dyMEAN/all_data/pdb/1ncb.pdb"
+      4dtg_cdrh3:
+        # K Chain (Antigen): K2-K61 (length 60)
+        # L Chain (Light): Gaps found at 33, 58-64, 73, 81-82, 110-113
+        # H Chain (Heavy): Gaps found at 10, 31-34, 60-61, 73. 
+        # CDRH3 sequence "ARLGGYDEGDAMDS" is found perfectly spanning PDB residues H105 to H117 (Length 14).
+        contig_string: "K2-61/L1-32/L34-57/L65-72/L74-80/L83-109/L114-129/H1-9/H11-30/H35-59/H62-72/H74-104/14-14/H118-129"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/4dtg.pdb"
         atom_selection_mode: "all_atom"
         motif_only: False
-        motif_min_length: 516
-        motif_max_length: 516
-        segment_order: "N;L;H"
+        # Antigen (60) + L Chain (114) + H Chain Framework (108) + CDRH3 (14) = 296
+        motif_min_length: 296
+        motif_max_length: 296
+        segment_order: "K;L;H"
+
+      3ffd_cdrh3:
+        contig_string: "P14-31/B1-9/B11-30/B36-59/B63-72/B74-80/B83-129/A1-9/A11-30/A35-59/A62-72/A74-104/11-11/A118-129"
+        motif_pdb_path: "/home/nvme02/yilin/dyMEAN/all_data/pdb/3ffd.pdb"
+        atom_selection_mode: "all_atom"
+        motif_only: False
+        motif_min_length: 254
+        motif_max_length: 254
+        segment_order: "P;B;A"
 
   metric:
     compute_designability: True
@@ -123,7 +169,7 @@ generation:
   args:
     nsteps: 50
     self_cond: True
-
+    
   model:
     bb_ca:
       simulation_step_params:

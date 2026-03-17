@@ -94,7 +94,7 @@ def generate_yaml_from_json(data):
                     is_cdr_skipped = True
 
             # 出现任何不连续：CDR占位 / 物理断开 / 编号跳跃
-            if is_cdr_skipped or (dist > 4.5) or is_num_jump:
+            if is_cdr_skipped or (dist > 4.5):
                 start_num = current_block[0].id[1]
                 end_num = current_block[-1].id[1]
                 

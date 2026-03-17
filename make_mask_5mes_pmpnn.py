@@ -66,12 +66,12 @@ def create_fixed_positions(pdb_path, target_chain, design_start, design_end, out
     print(f"PDB Key: '{pdb_name}'")
 
 if __name__ == "__main__":
-    PDB_FILE = "/home/nvme03/yilin/ukantibody/inference/inference_antibody_5mes_cdrh3/job_0_id_1_motif_5mes_cdrh3_20260308_080539/job_0_id_1_motif_5mes_cdrh3_20260308_080539.pdb" 
+    PDB_FILE = "/home/nvme03/yilin/ukantibody/inference/inference_antibody_5hi4_cdrh3/job_0_id_0_motif_5hi4_cdrh3_20260315_235116/job_0_id_0_motif_5hi4_cdrh3_20260315_235116.pdb" 
     
     create_fixed_positions(
         pdb_path=PDB_FILE, 
-        target_chain="H", 
-        design_start=105,  # CDR-H3 PDB 起始编号
-        design_end=116,    # CDR-H3 PDB 结束编号
-        output_file="5mes_fixed.jsonl"
+        target_chain="C",       # 👈 5hi4 的重链是 C 链
+        design_start=105,       # 👈 紧接在框架 C104 之后的生成起始编号
+        design_end=115,         # 👈 11个氨基酸的 CDR-H3 终止编号 (105 + 11 - 1 = 115)
+        output_file="5hi4_fixed.jsonl" # 👈 输出文件名改为 5hi4
     )
