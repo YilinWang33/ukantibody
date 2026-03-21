@@ -305,14 +305,14 @@ class ProductSpaceFlowMatcher(L.LightningModule):
         save_trajectory_every: int = 0,
         guidance_w: float = 1.0,
         ag_ratio: float = 0.0,
-        # [MODIFIED] Added fixed_context and fixed_mask for hard inpainting support
         fixed_context: Optional[Dict[str, Tensor]] = None,
         fixed_mask: Optional[Tensor] = None,
     ) -> Dict[str, Tensor]:
         """
-        Generates samples by simulating the ODE. Supports Hard Inpainting/Repainting.
+        Generates samples by simulating the ODE/SDE. 
+        Supports Hard Inpainting/Repainting with physical structure guidance.
         """
-        # overwrite n with the correct shape of coors_nm in batch
+        # Overwrite n with the correct shape of coors_nm in batch
         for key, value in batch.items():
             if (
                 isinstance(value, torch.Tensor)
@@ -320,17 +320,6 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                 and value.size(0) == 1
             ):
                 batch[key] = value.squeeze(0)
-                # ================= [新增：强制注入已知结构用于 Repainting] =================
-        #if "x_motif" in batch and "seq_motif_mask" in batch:
-            #if fixed_context is None:
-                #fixed_context = {}
-            # 提取主链 CA 原子的已知坐标，x_motif 形状是 [B, N, 37, 3]，CA是 index 1
-            #fixed_context["bb_ca"] = batch["x_motif"][:, :, 1, :]
-            
-            #if fixed_mask is None:
-                # seq_motif_mask 形状是 [B, N]，代表哪些残基是已知的
-                #fixed_mask = batch["seq_motif_mask"]
-        # =========================================================================       
 
         if "mask" in batch and batch["mask"] is not None:
             mask = batch["mask"]
@@ -339,7 +328,7 @@ class ProductSpaceFlowMatcher(L.LightningModule):
         assert mask.shape == (nsamples, n)
         
         if save_trajectory_every > 0:
-            [{} for _ in range(nsamples)]
+            trajectory_log = [{} for _ in range(nsamples)]
 
         ts = {
             data_mode: get_schedule(
@@ -350,7 +339,7 @@ class ProductSpaceFlowMatcher(L.LightningModule):
             for data_mode in self.data_modes
         }
 
-        # [MODIFIED] Only needed if you want to support SDE, but let's keep it for compatibility
+        # Maintained for SDE compatibility
         gt = {
             data_mode: get_gt(
                 t=ts[data_mode][:-1],
@@ -361,19 +350,11 @@ class ProductSpaceFlowMatcher(L.LightningModule):
             for data_mode in self.data_modes
         }
 
-        # [MODIFIED] Prepare noise for inpainting
-        # If we have a fixed context (clean structure x_1), we need to sample noise x_0
-        # that corresponds to it, so we can interpolate.
+        # Initialize sampling for Inpainting
         with torch.no_grad():
             x = self.sample_noise(
                 n, shape=(nsamples,), device=device, mask=mask,
             )
-            
-            # [MODIFIED] Initialize sampling for Inpainting
-            # If fixed_context is provided, we should ideally start the chain 
-            # with the correct noise for the fixed part.
-            # However, standard Flow Matching usually starts from pure noise.
-            # We will handle the constraint at each step (Repainting).
             
             # Capture the starting noise x_0 for repainting interpolation
             x_0_noise = {k: v.clone() for k, v in x.items()}
@@ -384,7 +365,6 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                     for data_mode in self.data_modes
                 }
                 
-                # [MODIFIED] We need t_next for repainting
                 t_next = {
                     data_mode: ts[data_mode][step + 1] * torch.ones(nsamples, device=device)
                     for data_mode in self.data_modes
@@ -403,27 +383,29 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                 batch["mask"] = mask
                 
                 if step > 0 and self_cond:
-                    # 1. 深度拷贝一份，避免修改污染原来的引用
+                    # 1. Deep copy to prevent mutating the original reference
                     batch["x_sc"] = {k: v.clone() for k, v in x_1_pred.items()}
                     
-                    # ================== 【新增：强行修复自条件 x_sc】 ==================
+                    # ================== [Self-Conditioning Constraints] ==================
+                    # Enforce the known structural motif into the self-conditioning representations
                     if fixed_context is not None and fixed_mask is not None:
                         for dm in self.data_modes:
                             if dm in fixed_context and dm in batch["x_sc"]:
                                 x_1_fixed = fixed_context[dm].to(device)
                                 
-                                # 维度对齐安全锁 (针对 bb_ca 可能的 4 维变 3 维问题)
+                                # Dimensionality alignment safeguard (e.g., all-atom to CA only)
                                 if dm == "bb_ca" and x_1_fixed.ndim == 4 and x_1_fixed.shape[-2] == 37:
                                     x_1_fixed = x_1_fixed[:, :, 1, :]
                                 
                                 m = fixed_mask.to(device)
-                                # 动态对齐掩码维度
+                                
+                                # Dynamic mask expansion
                                 if batch["x_sc"][dm].ndim == 3:
                                     m = m.unsqueeze(-1)
                                 elif batch["x_sc"][dm].ndim == 4:
                                     m = m.unsqueeze(-1).unsqueeze(-1)
                                 
-                                # 强行用真实的已知结构，替换掉网络自己瞎猜的虚假上下文
+                                # Override hallucinated context with the true structural motif
                                 batch["x_sc"][dm] = m * x_1_fixed + (~m) * batch["x_sc"][dm]
                     # ===================================================================
 
@@ -454,121 +436,101 @@ class ProductSpaceFlowMatcher(L.LightningModule):
                     simulation_step_params=simulation_step_params,
                 )
 
-                # 2. [MODIFIED] Hard Constraint / Repainting
-                # If we have a known structure (fixed_context), we force the fixed atoms
-                # to lie on their correct trajectory x_t = (1-t)*x_0 + t*x_1 (Optimal Transport)
+                # 2. Hard Constraint / Repainting via Optimal Transport Path
+                # Forces the fixed atoms to lie on their theoretical trajectory: x_t = (1-t)*x_0 + t*x_1
                 if fixed_context is not None and fixed_mask is not None:
                     for dm in self.data_modes:
                         if dm in fixed_context:
-                            # Clean target structure (x_1) for fixed regions
                             x_1_fixed = fixed_context[dm].to(device)
-                            # Initial noise (x_0) for fixed regions
                             x_0_fixed = x_0_noise[dm].to(device)
 
-                            # ================== 【关键修复：对齐维度】 ==================
-                            # 如果网络当前处理的是 bb_ca (单原子)，而 fixed_context 里传入的是全原子 (37原子)
                             if dm == "bb_ca" and x_1_fixed.ndim == 4 and x_1_fixed.shape[-2] == 37:
-                                x_1_fixed = x_1_fixed[:, :, 1, :]  # 只提取 CA 坐标
-                            # ============================================================
+                                x_1_fixed = x_1_fixed[:, :, 1, :]  # Extract CA coordinates
                             
-                            # Get the time scalar for the *next* step (where we just arrived)
-                            # t_next is shape [B], we need broadcasting
                             t_val = t_next[dm].view(-1, 1, 1) if x[dm].ndim == 3 else t_next[dm].view(-1, 1, 1, 1)
 
-                            # Compute the correct noisy state at t_{step+1}
-                            # OT path: x_t = (1 - t) * x_0 + t * x_1
+                            # Compute the analytic noisy state at t_{step+1}
                             x_fixed_noisy = (1.0 - t_val) * x_0_fixed + t_val * x_1_fixed
                             
-                            # Apply mask: 
-                            # mask=1 (True) -> Fixed Motif -> Use x_fixed_noisy
-                            # mask=0 (False) -> Generated CDR -> Use x (model output)
-                            
-                            # Handle mask dimensions
                             m = fixed_mask.to(device)
-                            if x[dm].ndim == 3: # [B, N, C]
+                            if x[dm].ndim == 3:
                                 m = m.unsqueeze(-1) 
-                            elif x[dm].ndim == 4: # [B, N, C, D]
+                            elif x[dm].ndim == 4:
                                 m = m.unsqueeze(-1).unsqueeze(-1)
                             
-                            # Overwrite
+                            # Inject analytic noise into the fixed motif regions
                             x[dm] = m * x_fixed_noisy + (~m) * x[dm]
-                # ================== 【新增算法：几何物理弹簧引导 (Spring Guidance)】 ==================
-                # 技术亮点：通过梯度下降注入先验物理约束，解决潜空间流匹配易导致断链和高 RMSD 的通病
+
+                # ================== [Geometric Spring Guidance (Physical Prior)] ==================
+                # Injects physical constraints via gradient descent to mitigate chain-breaks 
+                # and high RMSD, common issues in latent space flow matching.
                 if "bb_ca" in x and fixed_mask is not None:
-                    x_bb = x["bb_ca"] # 获取当前步骤的 CA 坐标 [B, N, 3], 单位 nm
+                    x_bb = x["bb_ca"] # Current CA coordinates [B, N, 3] in nm
                     m_bool = fixed_mask.to(device) # [B, N]
                     
-                    # 动态学习率：随着生成逼近真实 (t 变大)，弹簧拉力越来越强
+                    # Dynamic learning rate: spring force strengthens as t approaches 1
                     t_scalar = t_next["bb_ca"].view(-1).mean().item() if "bb_ca" in t_next else 1.0
                     spring_lr = 0.15 * (t_scalar + 0.1) 
-                    target_dist = 0.38 # 物理常识：C-alpha 之间的肽键距离约为 3.8 Å = 0.38 nm
-                    spring_iters = 5   # 每步 ODE 迭代 5 次弹簧松弛
+                    target_dist = 0.38 # Physical prior: C-alpha to C-alpha bond distance ~3.8 Å (0.38 nm)
+                    spring_iters = 5   # Apply relaxation for 5 iterations per ODE step
                     
                     for _ in range(spring_iters):
-                        # 计算相邻氨基酸 CA 的向量与距离
+                        # Compute vectors and distances between adjacent CA atoms
                         delta = x_bb[:, 1:, :] - x_bb[:, :-1, :] # [B, N-1, 3]
                         dist = torch.norm(delta, dim=-1, keepdim=True) # [B, N-1, 1]
                         
-                        # 计算胡克定律弹簧力 (拉扯偏离 0.38nm 的部分)
+                        # Hooke's Law: penalize deviations from the target bond distance
                         force_magnitude = dist - target_dist
                         force_dir = delta / (dist + 1e-6)
                         force = force_magnitude * force_dir # [B, N-1, 3]
                         
-                        # 将力反作用于左右两个原子
+                        # Distribute reactive forces to adjacent atoms
                         update = torch.zeros_like(x_bb)
-                        update[:, :-1, :] -= force  # 拉拢 i
-                        update[:, 1:, :] += force   # 拉拢 i+1
+                        update[:, :-1, :] -= force  # Pull residue i
+                        update[:, 1:, :] += force   # Pull residue i+1
                         
-                        # 【核心】只允许更新“需要生成的 CDR 区域 (mask=0)”，绝对不能破坏已固定的 Framework
+                        # [Crucial] Restrict updates exclusively to generated CDR regions (mask=0).
+                        # The fixed Framework must remain completely unaltered.
                         m_float = (~m_bool).float()
                         if x_bb.ndim == 3:
                             m_float = m_float.unsqueeze(-1)
                         elif x_bb.ndim == 4:
                             m_float = m_float.unsqueeze(-1).unsqueeze(-1)
                             
-                        # 施加弹簧位移
+                        # Apply displacement
                         x_bb = x_bb - spring_lr * update * m_float
                         
-                    # 把受物理力修正后的坐标写回 x
                     x["bb_ca"] = x_bb
                 # =========================================================================================
 
-                # ========================= [DEBUG 3 插入位置 开始] =========================
-                # ==============================================================================
-                # 只在 bb_ca 这个模态上打印，并且为了避免刷屏，每 10 步打印一次，以及最后一步打印
+                # ==================================== [Diagnostics] ====================================
+                # Periodic logging for generative stability and repainting integrity
                 if "bb_ca" in x and (step % 10 == 0 or step == nsteps - 1):
-                    x_bb = x["bb_ca"] # 通常形状为 [B, N, 3]
-                    v_pred_bb = nn_out["bb_ca"]["v"] # 从前面步骤预测出来的速度
+                    x_bb = x["bb_ca"]
+                    v_pred_bb = nn_out["bb_ca"]["v"] 
                     
-                    print(f"\n[DEBUG 3 Flow Matching] Step {step}/{nsteps} (t={ts['bb_ca'][step].item():.3f} -> t_next={ts['bb_ca'][step+1].item():.3f})")
-                    print(f"  --> 当前生成部分 (x_t) bb_ca 的 abs().max(): {x_bb.abs().max().item():.4f}")
-                    print(f"  --> 当前网络预测速度 (v_pred) bb_ca 的 abs().max(): {v_pred_bb.abs().max().item():.4f}")
+                    print(f"\n[ODE Step {step}/{nsteps}] t: {ts['bb_ca'][step].item():.3f} -> {ts['bb_ca'][step+1].item():.3f}")
+                    print(f"  ├─ x_t max abs val: {x_bb.abs().max().item():.4f}")
+                    print(f"  ├─ v_pred max abs val: {v_pred_bb.abs().max().item():.4f}")
                     
-                    # 如果有 repainting，检查刚被强制覆盖进去的 x_fixed_noisy 的尺度
                     if fixed_context is not None and fixed_mask is not None and "bb_ca" in fixed_context:
-                        # 计算当前用于覆盖的理论噪声坐标的极值
-                        xf_n = x_fixed_noisy
-                        print(f"  --> [Repainting] 理论轨迹 x_fixed_noisy (bb_ca) 的 abs().max(): {xf_n.abs().max().item():.4f}")
+                        print(f"  ├─ [Repainting] Analytic noisy trajectory max abs val: {x_fixed_noisy.abs().max().item():.4f}")
+                        print(f"  ├─ [Repainting] Ground truth target (x_1) max abs val: {x_1_fixed.abs().max().item():.4f}")
                         
-                        # 计算真实结构 x_1 的极值，用于对比
-                        print(f"  --> [Repainting] 真实结构 x_1_fixed (bb_ca) 的 abs().max(): {x_1_fixed.abs().max().item():.4f}")
-                        
-                        # 重点检查：被替换的区域，它相邻的氨基酸是不是扯断了？
-                        # 我们简单计算一下全长 CA 的相邻距离
+                        # Structural Integrity Check
                         ca_dist = torch.norm(x_bb[:, 1:, :] - x_bb[:, :-1, :], dim=-1)
-                        print(f"  --> [几何检查] 当前所有相邻 CA 键长的最大值: {ca_dist.max().item():.4f} nm")
+                        print(f"  ├─ [Geometry] Max adjacent CA bond distance: {ca_dist.max().item():.4f} nm")
                         
-                        # 检查网络是否直接预测出了 NaN
+                        # Numerical Stability Check
                         if torch.isnan(v_pred_bb).any():
-                            print(f"  --> [致命错误] v_pred 出现 NaN !!!")
-                # ==============================================================================
-                # ========================= [DEBUG 3 插入位置 结束] =========================
-                # ==============================================================================
+                            print(f"  └─ [CRITICAL WARNING] NaN detected in velocity predictions (v_pred)!")
+                # =======================================================================================
 
             additional_info = {
                 "mask": mask,
             }
             return x, additional_info
+            
 
 # ... (Helper functions get_gt, get_schedule, _sample_t keep as is) ...
 def get_gt(t, mode, param, clamp_val=None, eps=1e-2):

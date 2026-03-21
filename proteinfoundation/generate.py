@@ -308,44 +308,48 @@ def save_predictions(
         )
 
 
-
 def save_motif_predictions(
     root_path: str,
-    predictions: List[List[Tuple[torch.tensor]]],
+    predictions: List[List[Tuple[torch.Tensor]]],
     job_id: int = 0,
     motif_pdb_name: str = None,
 ) -> None:
+    """
+    Saves the generated motif predictions to PDB files and performs structural integrity checks.
+    """
     predictions = [sample for sublist in predictions for sample in sublist]
     samples_per_length = defaultdict(int)
     
     for j, pred in enumerate(predictions):
-        # 这里的解包依然保持我们之前修改过的 4 个变量
+        # Unpack the tuple elements conforming to the updated prediction format
         coors_atom37, residue_type, res_idx, chain_idx = pred  
 
-        # ====== 🐞 插入 PRINT 2：检查生成的坐标是否崩溃 ======
-        print(f"\n[Debug] Sample {j} 解析完成！")
-        print(f"        生成的坐标形状: {coors_atom37.shape}")
+        # ================= [Structural Integrity Diagnostics] =================
+        print(f"\n[Diagnostics] Parsing Sample {j}")
+        print(f"  ├─ Generated coordinates shape: {coors_atom37.shape}")
         
-        # 检查有没有出现 NaN 或极大的坐标值（爆炸特征）
+        # Check for numerical instability (NaNs or exploding coordinates)
         is_nan = torch.isnan(coors_atom37).any().item()
         max_coord = torch.max(torch.abs(coors_atom37)).item()
-        print(f"        坐标是否有 NaN: {is_nan}")
-        print(f"        坐标的绝对值最大值: {max_coord:.4f} (如果 > 100 通常意味着崩了)")
+        print(f"  ├─ Contains NaN values: {is_nan}")
+        # Values exceeding ~100 Å typically indicate coordinate divergence
+        print(f"  ├─ Max absolute coordinate: {max_coord:.4f} Å")
         
-        # 计算相邻 CA 原子之间的距离（看看有没有肽键断裂）
-        ca_coords = coors_atom37[:, 1, :] # 1是CA原子的索引
+        # Evaluate chain continuity by calculating adjacent C-alpha distances
+        ca_coords = coors_atom37[:, 1, :] # Index 1 corresponds to CA atoms
         ca_distances = torch.norm(ca_coords[1:] - ca_coords[:-1], dim=-1)
-        max_dist = torch.max(ca_distances).item()
-        print(f"        相邻CA原子的最大距离: {max_dist:.4f} 埃 (如果大于 5 埃说明链断了)")
-        # ===================================================
+        max_dist = torch.max(ca_distances).item() if ca_distances.numel() > 0 else 0.0
+        # Distances > 5.0 Å strongly suggest chain breaks (peptide bond rupture)
+        print(f"  └─ Max adjacent CA-CA distance: {max_dist:.4f} Å")
+        # ====================================================================
         
         n = coors_atom37.shape[-3]
         
-        # 初始文件夹名称
+        # Define the base directory name for the output sample
         dir_name = f"job_{job_id}_id_{j}_motif_{motif_pdb_name}"
         sample_root_path = os.path.join(root_path, dir_name)
         
-        # 【新增逻辑】：检查该文件夹是否已经存在，如果存在则追加当前时间戳
+        # Collision Avoidance: Append timestamp if the directory already exists
         if os.path.exists(sample_root_path):
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             dir_name = f"{dir_name}_{timestamp}"

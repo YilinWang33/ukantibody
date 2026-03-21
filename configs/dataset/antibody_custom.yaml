@@ -1,8 +1,8 @@
-# 这是一个完整的数据集配置，它将完全替代 pdb_train_ucond
+
 datamodule:
   _target_: proteinfoundation.datasets.antibody_data.AntibodyLightningDataModule
-  json_path: "/home/nvme02/yilin/dyMEAN/all_data/sabdab_all.json"
-  pdb_dir: "/home/nvme02/yilin/dyMEAN/all_data/pdb"
+  json_path: "./dataset/sabdab_all.json"
+  pdb_dir: "./dataset/pdb"
   
   batch_size: 1
   num_workers: 4

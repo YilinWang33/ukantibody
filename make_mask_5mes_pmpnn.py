@@ -66,7 +66,7 @@ def create_fixed_positions(pdb_path, target_chain, design_start, design_end, out
     print(f"PDB Key: '{pdb_name}'")
 
 if __name__ == "__main__":
-    PDB_FILE = "/home/nvme03/yilin/ukantibody/inference/inference_antibody_5hi4_cdrh3/job_0_id_0_motif_5hi4_cdrh3_20260315_235116/job_0_id_0_motif_5hi4_cdrh3_20260315_235116.pdb" 
+    PDB_FILE = "/home/nvme03/yilin/ukantibody/inference/inference_antibody_5hi4_cdrh3/job_0_id_7_motif_5hi4_cdrh3_20260315_235116/job_0_id_7_motif_5hi4_cdrh3_20260315_235116.pdb" 
     
     create_fixed_positions(
         pdb_path=PDB_FILE, 

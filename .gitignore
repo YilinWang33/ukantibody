@@ -30,3 +30,4 @@ wandb/
 data/pdb_train/pdb_seqres.txt.gz
 data/pdb_train/pdb_seqres.txt
 data/pdb_train/pdb_seqres.txt.gz
+dataset/pdb/*.pdb
